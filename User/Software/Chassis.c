@@ -143,10 +143,10 @@ void Chassis_Init()
     
     //PID初始化
     /*PID轮向电机速度环初始化*/
-    PID_Set(&Chassis.forward_FL.chassis_speed_pid_forward_FL, 20000.0f, 0, 0.3f, 0.0f, CHASSISMOTOR_MAX_CURRENT/2, 1500);
-    PID_Set(&Chassis.forward_FR.chassis_speed_pid_forward_FR, 20000.0f, 0, 0.3f, 0.0f, CHASSISMOTOR_MAX_CURRENT/2, 1500);
-    PID_Set(&Chassis.forward_BL.chassis_speed_pid_forward_BL, 20000.0f, 0, 0.3f, 0.0f, CHASSISMOTOR_MAX_CURRENT/2, 1500);
-    PID_Set(&Chassis.forward_BR.chassis_speed_pid_forward_BR, 20000.0f, 0, 0.3f, 0.0f, CHASSISMOTOR_MAX_CURRENT/2, 1500);
+    PID_Set(&Chassis.forward_FL.chassis_speed_pid_forward_FL, 8000.0f, 0, 0.3f, 0.0f, CHASSISMOTOR_MAX_CURRENT, 1500);
+    PID_Set(&Chassis.forward_FR.chassis_speed_pid_forward_FR, 8000.0f, 0, 0.3f, 0.0f, CHASSISMOTOR_MAX_CURRENT, 1500);
+    PID_Set(&Chassis.forward_BL.chassis_speed_pid_forward_BL, 8000.0f, 0, 0.3f, 0.0f, CHASSISMOTOR_MAX_CURRENT, 1500);
+    PID_Set(&Chassis.forward_BR.chassis_speed_pid_forward_BR, 8000.0f, 0, 0.3f, 0.0f, CHASSISMOTOR_MAX_CURRENT, 1500);
     /*PID舵向电机位置环初始化*/
     PID_Set(&Chassis.turn_FL.chassis_location_pid_turn_FL,8.0f, 0.0f, 0.0f, 0.0f, CHASSISMOTOR_MAX_CURRENT, 1500);
     PID_Set(&Chassis.turn_FR.chassis_location_pid_turn_FR,8.0f, 0.0f, 0.0f, 0.0f, CHASSISMOTOR_MAX_CURRENT, 1500);

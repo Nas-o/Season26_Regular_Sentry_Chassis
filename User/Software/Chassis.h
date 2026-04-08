@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-03-24 04:18:46
+ * @LastEditTime: 2026-04-07 09:20:23
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Chassis.h
  */
 
@@ -44,10 +44,10 @@
 
 
 // 轮子向前时6020编码器的值
-#define X_AXIS_ECD_FL 7162                       
-#define X_AXIS_ECD_FR 2420
-#define X_AXIS_ECD_BL 1023
-#define X_AXIS_ECD_BR 3059
+#define X_AXIS_ECD_FL 7066                       
+#define X_AXIS_ECD_FR 2548
+#define X_AXIS_ECD_BL 1027
+#define X_AXIS_ECD_BR 2889
 
 /* 功率限制模型参数 (需根据实际底盘辨识调整) */
 // P = k0*I*w + k1*|w| + k2*(k0*I)^2 + k3
@@ -219,7 +219,7 @@ void Chassis_Calculator(float vx,float vy,float vw);
 float Random_Spin(float min, float max);
 float Generate_Random_Float(float min, float max);
 /* void Chassis_PowerLimit_Update(float max_power); */
-void Chassis_CAN_Dispatch(uint16_t id, uint8_t data[8]);
+uint8_t Chassis_CAN_Dispatch(uint16_t id, uint8_t data[8]);
 
 #define CHASSIS_TASK_TIME 1 // 底盘任务刷新间隔
 

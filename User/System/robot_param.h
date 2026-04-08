@@ -94,7 +94,7 @@
 
 //电机零点设置
 #define SMALL_YAW_ZERO   (109.25f)
-#define BIG_YAW_ZERO  (293.63f)
+#define BIG_YAW_ZERO  (191.78f)
 #define PITCH_ZERO (134.25f)
 #define SMALL_YAW_ECD_ZERO (2533.0f)
 

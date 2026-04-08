@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-01 22:10:14
+ * @LastEditTime: 2026-04-07 03:02:31
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Gimbal.c
  */
 /*
@@ -54,9 +54,9 @@ void Gimbal_Init()
     PID_Set(&Gimbal.big_yaw.big_yaw_auto_speed_pid, 0.021f, 0.0f, 0.0f, 0.0f, 10, 1000);
     /*PID位置环初始化*/
     // 遥控
-    PID_Set(&Gimbal.big_yaw.big_yaw_location_pid, 10.0f, 0.0f, 1.0f, 0.0f, 500.0, 100);
+    PID_Set(&Gimbal.big_yaw.big_yaw_location_pid, 12.0f, 0.0f, 1.0f, 0.0f, 500.0, 100);
     //自瞄
-    PID_Set(&Gimbal.big_yaw.big_yaw_auto_location_pid, 10.0f, 0.0f, 1.0f, 0.0f, 500, 100);
+    PID_Set(&Gimbal.big_yaw.big_yaw_auto_location_pid, 12.0f, 0.0f, 1.0f, 0.0f, 500, 100);
     // 云台零点初始化
     DMMotor_SetZero(BIG_YAW_ZERO, BIGYAWMotor); 
     }
@@ -84,13 +84,15 @@ void Gimbal_Updater()
     Gimbal.big_yaw.big_yaw_location_now = imu.yaw_cnt; 
 
     /*------模式切换处理------*/
-    // 通用规则：任何底盘模式切换 或 泄力退出 → 将目标锁定为当前位置，防止大yaw乱转
+    // 通用规则：任何底盘模式切换 或 泄力退出 → 保持大yaw当前位置，防止回零点
+    // 例外：进入导航模式(Navigation分支自行处理)、进入自瞄模式(大yaw跟随小yaw)
     uint8_t mode_changed    = (last_chassis_mode != (int)Global.Chassis.mode);
     uint8_t leaving_disable = (last_Global_Control_mode == 2 && Global.Control.mode != 2);
     if (mode_changed || leaving_disable)
     {
-        Global.Gimbal.input.yaw = Gimbal.big_yaw.big_yaw_location_now;
-        yaw_offset = 0.0f;
+        // 用偏移量锁定当前位置，避免CAN覆盖导致回零
+        // location_set = CAN_target + offset = CAN_target + (current - CAN_target) = current
+        yaw_offset = Gimbal.big_yaw.big_yaw_location_now - Global.Gimbal.input.yaw;
     }
     last_Global_Control_mode = Global.Control.mode;
 
