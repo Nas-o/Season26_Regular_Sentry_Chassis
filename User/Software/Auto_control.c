@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-03-24 15:26:58
+ * @LastEditTime: 2026-04-18 08:18:45
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Auto_control.c
  */
 
@@ -264,18 +264,34 @@ static void Receive_TRIGGER_MODE(uint8_t data[8])
     Global.Shoot.tigger_mode = bytes_to_float(&data[0]);
 }
 
-static const CanTxEntry_t GimbalTxTable[] = {
-    { CAN_ID_GIMBAL_RELATIVE_ANGLE, Pack_RelativeAngle },
-    { CAN_ID_REFEREE_DATA_1,        Pack_RefereeData1  },
-    { CAN_ID_REFEREE_DATA_2,        Pack_RefereeData2  },
-    { CAN_ID_REFEREE_DATA_3,        Pack_RefereeData3  },
+typedef struct {
+    uint16_t    id;
+    CanTxPack_t pack;
+    uint8_t     divider;
+    uint8_t     phase;
+} GimbalTxEntry_t;
+
+static const GimbalTxEntry_t GimbalTxTable[] = {
+    { CAN_ID_GIMBAL_RELATIVE_ANGLE, Pack_RelativeAngle, 1, 0 },
+    { CAN_ID_REFEREE_DATA_1,        Pack_RefereeData1, 10, 2 },
+    { CAN_ID_REFEREE_DATA_2,        Pack_RefereeData2, 10, 5 },
+    { CAN_ID_REFEREE_DATA_3,        Pack_RefereeData3, 10, 8 },
 };
 
 void Gimbal_CAN_SendAll(void)
 {
-    uint8_t buf[8];  // 整个发送循环共享一个 buffer，只占一次栈空间
+    static uint8_t tick = 0;
+    uint8_t buf[8];
+
     for (uint8_t i = 0; i < sizeof(GimbalTxTable)/sizeof(GimbalTxTable[0]); i++) {
+        if (tick % GimbalTxTable[i].divider != GimbalTxTable[i].phase) {
+            continue;
+        }
+
+        memset(buf, 0, sizeof(buf));
         GimbalTxTable[i].pack(buf);
         Fdcanx_SendData(&hfdcan2, GimbalTxTable[i].id, buf, 8);
     }
+
+    if (++tick >= 10) tick = 0;
 }

@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-06 10:37:34
+ * @LastEditTime: 2026-04-18 19:07:47
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Chassis.c
  */
 
@@ -160,7 +160,7 @@ void Chassis_Init()
 
 
     /*底盘跟随PID*/
-    PID_Set(&Chassis.chassis_follow_pid, 20.0f, 0.0f, 0.1f, 0.0f, 200, 40);
+    PID_Set(&Chassis.chassis_follow_pid, 0.65f, 0.0f, 0.0f, 0.0f, 120, 40);
     /*底盘功率控制pid*/
     /*底盘功率控制pid*/
     PID_Set(&chassis_power_pid, 0.04f, 0.0f, 0.01f,0, 0.09f, 0.09f);
@@ -481,6 +481,19 @@ float Obtain_Modulus_Normalization(float x, float modulus)
     return (tmp - modulus / 2.0f);
 }
 
+
+static float Chassis_Follow_Update(void)
+{
+    Chassis.relative_angle = Chassis_AngleLimit(Chassis.relative_angle);
+
+    if (fabsf(Chassis.relative_angle) <= 5.0f)
+    {
+        return 0.0f;
+    }
+
+    return -PID_Cal(&Chassis.chassis_follow_pid, Chassis.relative_angle, 0.0f) * RPM_TO_RAD_S;
+}
+
 /*************************Rudder_Angle_calculation****************************/
 /**
  * @brief 舵向角度解算
@@ -772,7 +785,7 @@ void Chassis_Calculator(float vx,float vy,float vw)
  */
 void Chassis_Controller()
 {
-    if (Global.Control.mode != 2)
+    if (Global.Control.mode != 1)
     {
     /*电流设置*/
 /*     CHASSISMotor_set(Chassis.forward_FL.wheel_current_FL, WHEEL_MOVE_FL);
@@ -827,29 +840,29 @@ void Chassis_Controller()
 void Chassis_Tasks(void)
 {
 #if (USE_CHASSIS !=0 )
-    float final_vx, final_vy;
+    float final_vx, final_vy, final_r;
 
-    if (Global.Chassis.mode == FLOW_Gimbal) {
-          // FLOW_Gimbal模式：云台坐标系到底盘坐标系变换
-          // theta = 云台相对于底盘的角度（弧度）
-          float theta = Chassis.relative_angle * (PI / 180.0f);
+    final_r = R_speed;
 
-          // 标准旋转矩阵：v_chassis = R(θ) * v_gimbal
-          final_vx = X_speed * cosf(theta) - Y_speed * sinf(theta);
-          final_vy = X_speed * sinf(theta) + Y_speed * cosf(theta);
-      }
-      else {
-          // 其他模式（包括FLOW_Chassis）：直接使用底盘坐标系
-          final_vx = X_speed;
-          final_vy = Y_speed;
-      }
+    if (Global.Chassis.mode == FLOW_Gimbal)
+    {
+        float theta;
 
-    // 角度解算
-    Rudder_Angle_Calculation(final_vx, final_vy, R_speed);
-    // 底盘数据更新
+        final_r = Chassis_Follow_Update();
+        theta = Chassis.relative_angle * (PI / 180.0f);
+
+        final_vx = X_speed * cosf(theta) - Y_speed * sinf(theta);
+        final_vy = X_speed * sinf(theta) + Y_speed * cosf(theta);
+    }
+    else
+    {
+        final_vx = X_speed;
+        final_vy = Y_speed;
+    }
+
+    Rudder_Angle_Calculation(final_vx, final_vy, final_r);
     Chassis_Updater();
-    // 底盘运动解算
-    Chassis_Calculator(final_vx, final_vy, R_speed);
+    Chassis_Calculator(final_vx, final_vy, final_r);
 /* --- 插入点：功率限制逻辑 --- */
     
 // A. 获取基础限制 (来自裁判系统)

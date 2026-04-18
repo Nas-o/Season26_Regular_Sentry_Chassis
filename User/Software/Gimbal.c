@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-07 03:02:31
+ * @LastEditTime: 2026-04-16 02:38:29
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Gimbal.c
  */
 /*
@@ -163,13 +163,12 @@ void Gimbal_Calculator()
         switch(Global.Chassis.mode)
         {
             case Navigation :
-                // is_scaning==1：速度控制（扫描匀速旋转由上板导航速度控制）
             /* case FLOW_Chassis : */ 
                 Gimbal.big_yaw.big_yaw_speed_set = 120.0f;
-                if(Chassis.is_aligning == 1)
+                /* if(Chassis.is_aligning == 5)
                 {
                     Gimbal.big_yaw.big_yaw_speed_set = Gimbal.big_yaw.planning_speed;
-                }
+                } */
             break;
             default :
                 Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
@@ -197,7 +196,7 @@ void Gimbal_Calculator()
  */
 void Gimbal_Controller()
 {
-    if(Global.Control.mode != LOCK)
+    if(Global.Control.mode != 1)
     {
         DMMotor_Set(BIGYAWMotor,
                  0,
@@ -266,6 +265,12 @@ void Gimbal_SetYawAngle(float angle)
 
 void Pack_RelativeAngle(uint8_t data[8])
 {
+    static uint8_t seq = 0;
+
     Chassis.relative_angle = DMMotor_GetData(BIGYAWMotor).motor_data.para.angle_cnt - BIG_YAW_ZERO;
     float_to_bytes(Chassis.relative_angle, &data[0]);
+    data[4] = seq++;
+    data[5] = 0xA5u;
+    data[6] = 0x5Au;
+    data[7] = 0;
 }

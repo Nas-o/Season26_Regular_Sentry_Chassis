@@ -1,7 +1,7 @@
 /*
  * @Date: 2025-10-27 21:03:17
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-03-24 19:14:15
+ * @LastEditTime: 2026-04-16 00:28:38
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Shoot.h
  */
 
@@ -28,7 +28,7 @@ enum trigger_speed_e // 拨弹电机速度
     TRIGGER_SPEED_MID   = TRIGGER_SPEED_M,
     TRIGGER_SPEED_LOW   = TRIGGER_SPEED_L,
     TRIGGER_SPEED_DEBUG = 3000,
-    TRIGGER_SPEED_AIM_HIGH = 8640,
+    TRIGGER_SPEED_AIM_HIGH = 7680,
     TRIGGER_SPEED_AIM_MID = 2400,
     TRIGGER_SPEED_AIM_LOW = 1200,
 };
@@ -51,6 +51,34 @@ typedef enum {
 
 // 定义低速待机的转速（建议设为一个很小但足以维持转动的数值）
 #define SINGLE_WAIT_SPEED  500
+
+/* 热量控制状态机 */
+typedef enum {
+    HEAT_BYPASS = 0, // 未接收到裁判热量数据时旁路热量控制
+    HEAT_BOOST,
+    HEAT_TRACK,
+    HEAT_KEEPALIVE,
+    HEAT_GUARD,
+} trigger_heat_state_e;
+
+/* 热量控制参数 */
+#define HEAT_VALID_LIMIT_MIN         1.0f            // Heat_Limit 的最小有效值，小于该值时认为裁判热量上限无效
+#define HEAT_VALID_COOLING_MIN       1.0f            // CooLing_Value 的最小有效值，小于该值时认为裁判冷却数据无效
+#define HEAT_RESERVE_MARGIN          15.0f           // 预留热量安全余量，实际控制时使用 safe_margin = Heat_Limit - Reserve - Barrel_Heat
+#define HEAT_BOOST_ENTER_FACTOR      4.0f            // 进入 BOOST 的阈值系数：safe_margin >= 4 * cooling_value
+#define HEAT_BOOST_EXIT_FACTOR       (10.0f / 3.0f)  // 退出 BOOST 的阈值系数，用于形成 BOOST -> TRACK 回差
+#define HEAT_TRACK_ENTER_FACTOR      2.0f            // BYPASS 首次归位时进入 TRACK 的阈值系数
+#define HEAT_KEEP_EXIT_FACTOR        (5.0f / 3.0f)   // TRACK -> KEEPALIVE 的阈值系数，safe_margin 低于该值时进入保活区
+#define HEAT_KEEP_ENTER_FACTOR       1.0f            // BYPASS 首次归位时进入 KEEPALIVE 的阈值系数
+#define HEAT_TRACK_RETURN_FACTOR     (7.0f / 3.0f)   // KEEPALIVE -> TRACK 的返回阈值系数，同时也是 TRACK 平滑段的下边界
+#define HEAT_GUARD_ENTER_FACTOR      0.50f           // KEEPALIVE -> GUARD 的阈值系数，进入极低速保底区
+#define HEAT_GUARD_EXIT_FACTOR       1.00f           // GUARD -> KEEPALIVE 的返回阈值系数，形成 GUARD 回差
+#define HEAT_KEEP_SPEED_RATIO        0.20f           // KEEPALIVE 目标速度占基础速度的比例
+#define HEAT_KEEP_SPEED_MIN          3840.0f          // KEEPALIVE 最小速度，防止高热量区转速过低导致拨盘停滞
+#define HEAT_KEEP_SPEED_MAX          5760.0f         // KEEPALIVE 最大速度，限制高基础速度模式下的热量继续上冲
+#define HEAT_GUARD_SPEED_RATIO       0.10f           // GUARD 目标速度占基础速度的比例
+#define HEAT_GUARD_SPEED_MIN         2400.0f          // GUARD 最小速度，保证逼近热量边界时拨盘仍持续转动
+#define HEAT_GUARD_SPEED_MAX         3480.0f          // GUARD 最大速度，防止极限热量区仍输出过高转速
 
 /* 内部调用 */
 #define SHOOTMotor_init(type, id)    DJIMotor_Init(type, id)
@@ -78,7 +106,8 @@ typedef struct
     float trigger_current_now;
 
     /*-------目标量-------*/
-    enum trigger_speed_e trigger_speed_set;
+    float trigger_speed_base;
+    float trigger_speed_set;
     enum shoot_speed_e shoot_speed_set;
     float current[3];
 
@@ -87,6 +116,8 @@ typedef struct
     int32_t trigger_ecd_now;
     int32_t single_shot_start_ecd;
     uint8_t last_trigger_mode;
+    uint8_t heat_control_enabled;
+    trigger_heat_state_e heat_state;
 
 }Shoot_t;
 
@@ -94,3 +125,4 @@ typedef struct
 void Shoot_Init();
 void Shoot_Tasks();
 #endif 
+

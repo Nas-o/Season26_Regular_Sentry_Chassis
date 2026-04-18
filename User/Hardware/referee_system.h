@@ -32,7 +32,7 @@ typedef struct // 自定义结构体，需在函数中赋值，然后在 FREERTOS 里调用  后续可根
     
 
 
-    	//导航相关数据
+    //导航相关数据
 	
 	uint16_t remain_hp;                  //剩余血量
     uint8_t	game_type;                   //比赛类型
