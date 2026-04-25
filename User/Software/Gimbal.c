@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-16 02:38:29
+ * @LastEditTime: 2026-04-26 00:06:29
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Gimbal.c
  */
 /*
@@ -85,7 +85,7 @@ void Gimbal_Updater()
 
     /*------模式切换处理------*/
     // 通用规则：任何底盘模式切换 或 泄力退出 → 保持大yaw当前位置，防止回零点
-    // 例外：进入导航模式(Navigation分支自行处理)、进入自瞄模式(大yaw跟随小yaw)
+    // 例外：进入导航模式、进入自瞄模式(大yaw跟随小yaw)
     uint8_t mode_changed    = (last_chassis_mode != (int)Global.Chassis.mode);
     uint8_t leaving_disable = (last_Global_Control_mode == 2 && Global.Control.mode != 2);
     if (mode_changed || leaving_disable)
@@ -108,7 +108,7 @@ void Gimbal_Updater()
     /*------目标量更新------*/
     if (Global.Control.mode == 2 || Global.Chassis.mode == FLOW_Chassis)
     {
-        // 泄力 或 FLOW_Chassis：目标跟随当前位置（防止PID积分饱和，电流在Calculator中清零）
+        // 泄力 或 FLOW_Chassis：目标跟随当前位置
         Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now;
     }
     else if (Global.Chassis.mode == Navigation && Auto_data.is_scaning == 0)
@@ -121,7 +121,7 @@ void Gimbal_Updater()
     }
     else if (Global.Chassis.mode == Navigation)
     {
-        // Navigation 扫描：位置跟随当前（速度控制在Calculator中处理）
+        // Navigation 扫描：位置跟随当前
         Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now;
     }
     else
@@ -136,7 +136,8 @@ void Gimbal_Updater()
 /*-------------------- Calculate --------------------*/
 
 /**
- * @brief          控制量解算
+ * @brief          控制量解算.
+ * 
  * @param          none
  * @retval         none
  */
@@ -153,7 +154,7 @@ void Gimbal_Calculator()
     uint8_t nav_auto_lock = (Global.Chassis.mode == Navigation && Auto_data.is_scaning == 0);
     if (nav_auto_lock)
     {
-        // 导航 + 自瞄锁定：大yaw位置环追目标（目标在Updater中已设好）
+        // 导航 + 自瞄锁定：大yaw位置环追目标
         Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_auto_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
         Gimbal.big_yaw.current = PID_Cal(&Gimbal.big_yaw.big_yaw_auto_speed_pid, Gimbal.big_yaw.big_yaw_speed_now, Gimbal.big_yaw.big_yaw_speed_set);
     }
@@ -164,11 +165,11 @@ void Gimbal_Calculator()
         {
             case Navigation :
             /* case FLOW_Chassis : */ 
-                Gimbal.big_yaw.big_yaw_speed_set = 120.0f;
-                /* if(Chassis.is_aligning == 5)
+                Gimbal.big_yaw.big_yaw_speed_set = 80.0f;
+                if(Chassis.is_aligning == 5)
                 {
                     Gimbal.big_yaw.big_yaw_speed_set = Gimbal.big_yaw.planning_speed;
-                } */
+                }
             break;
             default :
                 Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);

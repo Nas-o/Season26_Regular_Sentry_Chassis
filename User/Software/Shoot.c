@@ -6,7 +6,6 @@
   * @history
   * Version    Date            Author          Modification
   * V1.0.0   2025.10.31       Wang Zihao       1.重新构建发射机构代码结构
-  * V1.1.0   2026.02.16       Gemini           2.优化单发限位逻辑，增加闭环锁止与防卡弹
   @verbatim
   ==============================================================================
 
@@ -60,10 +59,9 @@ Shoot_t Shoot;
  * 3. 最后由 Shoot_GetHeatControlledSpeed() 输出最终的速度参考。
  *
  * 优先级关系：
- * 1. 单发控制优先级最高，不受热量状态机覆盖。
- * 2. 堵转反转脱困优先级高于常规热量调速。
- * 3. 热量状态机只作用于连续拨弹模式。
- * 4. 热量控制只负责“降速”，主动停转仍只由TRIGGER_CLOSE、SINGLE和故障逻辑触发。
+ * 1. 堵转反转脱困优先级高于常规热量调速。
+ * 2. 热量状态机只作用于连续拨弹模式。
+ * 3. 热量控制只负责“降速”，主动停转仍只由TRIGGER_CLOSE和故障逻辑触发。
  * =================================================================
  */
 
@@ -128,7 +126,6 @@ static float Shoot_GetBaseSpeed(uint8_t trigger_mode)
     case ONLY_AIM_LOW:
         return (float)TRIGGER_CLOSE;
     case TRIGGER_CLOSE:
-    case SINGLE:
     default:
         return 0.0f;
     }
@@ -371,7 +368,7 @@ static float Shoot_GetHeatControlledSpeed(float base_speed)
     float barrel_heat = (float)Referee_data.Barrel_Heat;
     float cooling_value = (float)Referee_data.CooLing_Value;
     float safe_margin = heat_limit - HEAT_RESERVE_MARGIN - barrel_heat;
-    uint8_t heat_control_available = Shoot_HeatControlAvailable(heat_limit, cooling_value);
+    uint8_t heat_control_available = 0;//Shoot_HeatControlAvailable(heat_limit, cooling_value);
 
     Shoot_UpdateHeatState(safe_margin, cooling_value, heat_control_available);
 
@@ -406,8 +403,6 @@ void Shoot_Init()
 {
     TriggerMotor_init(DJI_M2006, TRIGGER_MOTOR);
     PID_Set(&Shoot.trigger_speed_pid, 8, 0, 3, 0.0f, SHOOTMOTOR_MAX_CURRENT, 0);
-    Shoot.single_shot_state = SINGLE_IDLE;
-    Shoot.last_trigger_mode = TRIGGER_CLOSE;
     Shoot.trigger_speed_base = 0.0f;
     Shoot.trigger_speed_set = 0.0f;
     Shoot.heat_control_enabled = 0;
@@ -418,88 +413,13 @@ void Shoot_Updater()
 {
     Shoot.trigger_speed_now = TriggerMotor_get_data(TRIGGER_MOTOR).speed_rpm;
     Shoot.trigger_current_now = TriggerMotor_get_data(TRIGGER_MOTOR).given_current;
-    Shoot.trigger_ecd_now = (int32_t)TriggerMotor_get_data(TRIGGER_MOTOR).ecd_cnt;
 
-    if (Global.Shoot.tigger_mode == SINGLE && Shoot.last_trigger_mode != SINGLE)
-    {
-        Shoot.single_shot_start_ecd = Shoot.trigger_ecd_now;
-        Shoot.single_shot_state = SINGLE_FIRING;
-    }
-    else if (Global.Shoot.tigger_mode != SINGLE && Shoot.single_shot_state == SINGLE_DONE)
-    {
-        Shoot.single_shot_state = SINGLE_IDLE;
-    }
-
-    Shoot.last_trigger_mode = Global.Shoot.tigger_mode;
     Shoot.trigger_speed_base = Shoot_GetBaseSpeed(Global.Shoot.tigger_mode);
 }
 
 void Shoot_Calculator()
 {
-    // 1. 优先级最高：执行单发任务
-    if (Shoot.single_shot_state == SINGLE_FIRING)
-    {
-        // 计算自触发时刻起的相对位移
-        int32_t moved_ecd = Shoot.trigger_ecd_now - Shoot.single_shot_start_ecd;
-        int32_t ecd_err = (int32_t)SINGLE_BULLET_ECD - moved_ecd;
-
-        // 到位判定
-        if (ecd_err <= SINGLE_SHOT_THRESHOLD)
-        {
-            Shoot.single_shot_state = SINGLE_DONE;
-            Shoot.trigger_speed_set = 0.0f;
-            Shoot.current[2] = 0;
-            return;
-        }
-
-        // 速度规划
-        float speed_set = (ecd_err <= SINGLE_SHOT_SLOWDOWN_ECD) ? 
-                          (float)SINGLE_SHOT_SLOW_SPEED : (float)TRIGGER_SPEED_HIGH;
-        Shoot.trigger_speed_set = speed_set;
-
-        // PID 计算
-        Shoot.current[2] = PID_Cal(&Shoot.trigger_speed_pid, Shoot.trigger_speed_now, speed_set);
-
-        /**
-         * 【关键优化：强力启动补偿】
-         * 如果在单发启动初期（转动还没超过总行程的 10%），且发现速度没起来，
-         * 直接给一个足以克服摩擦力的最小保底电流（例如 1000）。
-         */
-        if (moved_ecd < (SINGLE_BULLET_ECD / 10)) 
-        {
-            if (abs((int32_t)Shoot.trigger_speed_now) < 100) 
-            {
-                // 给一个方向正确的额外推力
-                Shoot.current[2] += (speed_set > 0) ? 1000.0f : -1000.0f;
-            }
-        }
-
-        // 防卡弹逻辑
-        static uint16_t block_timer = 0;
-        if (abs((int32_t)Shoot.trigger_speed_now) < 100 && abs((int32_t)Shoot.trigger_current_now) > 8000)
-            block_timer++;
-        else
-            block_timer = 0;
-
-        if (block_timer > 300) 
-        {
-            Shoot.single_shot_state = SINGLE_DONE;
-            Shoot.trigger_speed_set = 0.0f;
-            Shoot.current[2] = 0;
-            block_timer = 0;
-        }
-        return; 
-    }
-
-    // 2. 单发停机锁止
-    if (Global.Shoot.tigger_mode == SINGLE)
-    {
-        Shoot.trigger_speed_set = 0.0f;
-        Shoot.current[2] = 0;
-        return;
-    }
-
-    // 3. 常规模式逻辑 (HIGH/MID/LOW/AIM 等)
+    // 常规模式逻辑 (HIGH/MID/LOW/AIM 等)
     Shoot.trigger_speed_set = Shoot_GetHeatControlledSpeed(Shoot.trigger_speed_base);
 
     static int trigger_kill_cnt = 0;

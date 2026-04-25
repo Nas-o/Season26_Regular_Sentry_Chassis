@@ -62,13 +62,14 @@
 #define WHEEL_K0 0.214f
 #define WHEEL_K1 0.132f
 #define WHEEL_K2 3.47f
-#define WHEEL_K3 7.6f   
+#define CHASSIS_TOTAL_K3 7.6f
+#define WHEEL_K3 (CHASSIS_TOTAL_K3 * 0.5f)
 
 // 舵向电机 (GM6020)
 #define STEER_K0 0.741f
 #define STEER_K1 0.005f
 #define STEER_K2 12.98f
-#define STEER_K3 7.6f
+#define STEER_K3 (CHASSIS_TOTAL_K3 * 0.5f)
 
 /* 功率限制器结构体 */
 typedef struct

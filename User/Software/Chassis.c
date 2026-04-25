@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-18 19:07:47
+ * @LastEditTime: 2026-04-26 00:09:46
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Chassis.c
  */
 
@@ -49,25 +49,12 @@ int Hp_Time_Wait = 0;
 uint32_t last_gimbal_msg_time;
 float X_speed, Y_speed, R_speed;
 pid_t chassis_power_pid; // 功率闭环控制pid
-static float steer_last_set[4] = {0}; // 舵向角速度前馈：记录上一次目标位置
-#define STEER_FF_GAIN 0.5f // 前馈增益系数，可根据实际效果调节 (0.0~1.0)
-/* 
-// 舵向电机速度滤波器，解决回零抖动
-static float steer_filter_buf[4] = {0};
-// 滤波系数 (0.0~1.0)，越小越平滑但延迟越高。0.15 适合平滑抖动
-#define STEER_FILTER_ALPHA 0.15f 
-
-/**
- * @brief 简单的低通滤波器
- * @param input 新的输入值
- * @param mem 记忆的上一次输出值
- * @param alpha 滤波系数
- */
-/* float Chassis_Steer_LPF(float input, float *mem, float alpha)
-{
-    *mem = (*mem) * (1.0f - alpha) + input * alpha;
-    return *mem;
-}  */
+#define POWER_ALLOC_STEER_RATIO 0.8f
+#define POWER_LIMIT_REFEREE_MIN 40.0f
+#define POWER_LIMIT_MIN 20.0f
+#define CAP_MIN_VOL 13.0f
+#define POWER_PER_VOLT 15.0f
+#define CAP_EXTRA_POWER_MAX 200.0f
 
 float power_limt(float FL_current, float FR_current, float BL_current, float BR_current,
                  float FL_speed, float FR_speed, float BL_speed, float BR_speed, float max_p)
@@ -121,6 +108,22 @@ float power_limt(float FL_current, float FR_current, float BL_current, float BR_
 
     return percentage;
 }
+
+static float PowerLimit_GetRaw2AmpRatio(uint8_t is_steer)
+{
+    return is_steer ? (3.0f / 16384.0f) : (20.0f / 16384.0f);
+}
+
+static float PowerLimit_GetMotorPower(const PowerLimiter_t *lim, int16_t current_raw, float speed_rad_s, uint8_t is_steer)
+{
+    float i_real = (float)current_raw * PowerLimit_GetRaw2AmpRatio(is_steer);
+    float torque = i_real * lim->k0;
+
+    return torque * speed_rad_s +
+           lim->k1 * fabsf(speed_rad_s) +
+           lim->k2 * torque * torque +
+           lim->k3 / 4.0f;
+}
 /*-------------------- Init --------------------*/
 
 /**
@@ -165,11 +168,6 @@ void Chassis_Init()
     /*底盘功率控制pid*/
     PID_Set(&chassis_power_pid, 0.04f, 0.0f, 0.01f,0, 0.09f, 0.09f);
 
-    //底盘运动斜坡
-/*     RampGenerator_Init(&Chassis.Vx_ramp, CHASSIS_TASK_TIME, 40, 40, 2);
-    RampGenerator_Init(&Chassis.Vy_ramp, CHASSIS_TASK_TIME, 40, 40, 4);
-    RampGenerator_Init(&Chassis.Vw_ramp, CHASSIS_TASK_TIME, 300, 300, 4); */
-    
     //默认地盘跟随模式
     Global.Chassis.mode = FLOW_Chassis;
     /* 舵向电机参数初始化 */
@@ -252,88 +250,138 @@ void Chassis_Init()
  * - k0*I*w: 机械功率 (转矩*转速)
  * - k2*I^2: 焦耳热损耗 (最主要的超功率来源)
  */
-void PowerLimit_Predict(PowerLimiter_t *lim, int16_t *currents, float *speeds, uint8_t is_steer) 
+void PowerLimit_Predict(PowerLimiter_t *lim, int16_t *currents, float *speeds, uint8_t is_steer)
 {
     float total_p = 0.0f;
-    
-    // 定义电流转换系数：将代码中的 Raw 值转换为物理电流 Amps
-    // M3508 (轮向): 最大电流 20A 对应 16384 (或根据实际PID输出上限调整)
-    // GM6020 (舵向): 最大电流约 3A 对应 30000 (或 16384，取决于电调固件和PID设置)
-    float raw2amp_ratio = is_steer ? (3.0f / 16384.0f) : (20.0f / 16384.0f); 
 
-    for(int i = 0; i < 4; i++) 
+    for (int i = 0; i < 4; i++)
     {
-        // 1. 单位转换: Raw -> Amp
-        // 只有转成真实电流，k0(Nm/A) 和 k2(R) 这种物理参数才有意义
-        float i_real = (float)currents[i] * raw2amp_ratio; 
-        float w_real = speeds[i]; // rad/s
+        float p_item = PowerLimit_GetMotorPower(lim, currents[i], speeds[i], is_steer);
 
-        // 2. 计算力矩 Torque = k0 * Current
-        // 注意：这里的 lim->k0 应该是物理意义上的转矩常数 (Nm/A)
-        float torque = i_real * lim->k0;
-
-        // 3. 代入物理模型计算单轮功率
-        // [Term 1] torque * w_real:        机械功率 (做功)
-        // [Term 2] k1 * fabsf(w_real):     粘滞摩擦损耗 (与速度成正比)
-        // [Term 3] k2 * torque^2:          焦耳热损耗 (I^2*R) -> **这是超功率的罪魁祸首**
-        // [Term 4] k3 / 4.0f:              静态损耗 (电路板功耗等) 平均分给4个轮子
-        float p_item = torque * w_real + 
-                       lim->k1 * fabsf(w_real) + 
-                       lim->k2 * torque * torque + 
-                       lim->k3 / 4.0f;
-        
-        // 4. 累计功率
-        // 策略：只统计耗能(正功)。如果是刹车/反拖产生的发电(负功)，暂时忽略或视为0。
-        // 因为裁判系统只检测输出功率，不检测回充功率（除非你有主动泄放电路）。
-        if(p_item > 0.0f) 
+        if (p_item > 0.0f)
         {
-            total_p += p_item; 
+            total_p += p_item;
         }
     }
-    
-    // 保存预测结果
+
     lim->predict_power = total_p;
 }
 
 /**
- * @brief          【辅助函数】计算缩放系数并应用限制
+ * @brief          【辅助函数】按原版舵轮思路对每个电机分别求解限幅后的电流
  * @author         Nas (1319621819@qq.com)
  * @param[in/out]  lim:          限制器结构体 (读取predict, 写入scaling)
  * @param[in]      limit_power:  分配给该组电机的功率限额 (W)
- * @param[in/out]  currents:     4个电机的电流数组 (将被原地修改为限制后的值)
+ * @param[in/out]  currents:     4个电机的电流数组 (原地修改为限制后的值)
+ * @param[in]      speeds:       4个电机的实际转速数组 (单位: rad/s)
+ * @param[in]      is_steer:     是否为舵向电机
  * @note           
- * 核心算法：开根号缩放 (Sqrt Scaling)
- * 因为功率 P 与电流 I 的关系主要是二次方 (P ∝ I^2 * R)，
- * 所以电流的缩放比例应该是功率比例的开根号。
- * 例如：预测 120W，限制 30W (1/4)。
- * - 线性缩放: I_new = I_old * 0.25 --> P_new ≈ 120 * 0.0625 = 7.5W (限制过头了！)
- * - 根号缩放: I_new = I_old * 0.50 --> P_new ≈ 120 * 0.25 = 30W (完美！)
+ * 核心算法：对每个电机按分配功率求解一元二次方程，
+ * 比统一缩放更接近原版 SGPowerLimitator 的行为。
  */
-void PowerLimit_Apply(PowerLimiter_t *lim, float limit_power, int16_t *currents) 
+void PowerLimit_Apply(PowerLimiter_t *lim, float limit_power, int16_t *currents, float *speeds, uint8_t is_steer)
 {
-    // 情况A: 预测功率小于限制，无需限制
+    float allocatable_power = limit_power;
+    float power_sum_required = 0.0f;
+    float current_sum_before = 0.0f;
+    float current_sum_after = 0.0f;
+    float cmd_power[4] = {0};
+    float raw2amp_ratio = PowerLimit_GetRaw2AmpRatio(is_steer);
+
+    lim->limit_power_w = limit_power;
+
+    for (int i = 0; i < 4; i++)
+    {
+        cmd_power[i] = PowerLimit_GetMotorPower(lim, currents[i], speeds[i], is_steer);
+        current_sum_before += fabsf((float)currents[i]);
+
+        if (cmd_power[i] > 0.0f)
+        {
+            power_sum_required += cmd_power[i];
+        }
+        else
+        {
+            allocatable_power -= cmd_power[i];
+        }
+    }
+
     if (lim->predict_power <= limit_power) {
         lim->scaling_factor = 1.0f;
         return;
     }
-    
-    // 情况B: 超功率，计算缩放比例
-    // ratio = 允许 / 预测
-    float ratio = limit_power / lim->predict_power;
-    
-    // 安全检查
-    if (ratio < 0.0f) ratio = 0.0f;
-    
-    // **核心优化**: 使用 sqrtf 进行开根号逼近
-    // 因为 P ∝ I^2，所以 I_scale ≈ sqrt(P_scale)
-    lim->scaling_factor = sqrtf(ratio); 
-    
-    // 二次安全限幅
-    if(lim->scaling_factor > 1.0f) lim->scaling_factor = 1.0f;
-    
-    // 应用缩放系数到每一个电机
-    for(int i = 0; i < 4; i++) {
-        currents[i] = (int16_t)(currents[i] * lim->scaling_factor);
+
+    if (allocatable_power < 0.0f)
+    {
+        allocatable_power = 0.0f;
+    }
+
+    if (power_sum_required <= 0.0f)
+    {
+        lim->scaling_factor = 1.0f;
+        return;
+    }
+
+    for (int i = 0; i < 4; i++)
+    {
+        float limited_current;
+
+        if (cmd_power[i] <= 0.0f)
+        {
+            current_sum_after += fabsf((float)currents[i]);
+            continue;
+        }
+
+        float power_weight = cmd_power[i] / power_sum_required;
+        float motor_budget = power_weight * allocatable_power;
+        float w_real = speeds[i];
+        float delta = w_real * w_real -
+                      4.0f * lim->k2 * (lim->k1 * fabsf(w_real) + lim->k3 / 4.0f - motor_budget);
+        float torque_limit;
+
+        if (delta <= 0.0f)
+        {
+            torque_limit = -w_real / (2.0f * lim->k2);
+        }
+        else if (currents[i] >= 0)
+        {
+            torque_limit = (-w_real + sqrtf(delta)) / (2.0f * lim->k2);
+        }
+        else
+        {
+            torque_limit = (-w_real - sqrtf(delta)) / (2.0f * lim->k2);
+        }
+
+        limited_current = torque_limit / (lim->k0 * raw2amp_ratio);
+
+        if (currents[i] >= 0 && limited_current > currents[i])
+        {
+            limited_current = currents[i];
+        }
+        else if (currents[i] < 0 && limited_current < currents[i])
+        {
+            limited_current = currents[i];
+        }
+
+        if (limited_current > CHASSISMOTOR_MAX_CURRENT)
+        {
+            limited_current = CHASSISMOTOR_MAX_CURRENT;
+        }
+        else if (limited_current < -CHASSISMOTOR_MAX_CURRENT)
+        {
+            limited_current = -CHASSISMOTOR_MAX_CURRENT;
+        }
+
+        currents[i] = (int16_t)limited_current;
+        current_sum_after += fabsf(limited_current);
+    }
+
+    if (current_sum_before > 0.0f)
+    {
+        lim->scaling_factor = current_sum_after / current_sum_before;
+    }
+    else
+    {
+        lim->scaling_factor = 1.0f;
     }
 }
 
@@ -361,11 +409,12 @@ void Chassis_PowerControl_Total(float total_max_power) {
         &Chassis.forward_BR.wheel_current_BR
     };
     // [轮向电机] 实际转速 (rad/s)
+    // 使用减速后的出轴角速度，与功率模型中的 k0 / k1 / k2 单位保持一致
     float wheel_spd[] = {
-        Chassis.forward_FL.current_velocity_FL, 
-        Chassis.forward_FR.current_velocity_FR, 
-        Chassis.forward_BL.current_velocity_BL, 
-        Chassis.forward_BR.current_velocity_BR
+        CHASSISMotor_get_data(WHEEL_MOVE_FL).round_speed * RPM_TO_RAD_S,
+        CHASSISMotor_get_data(WHEEL_MOVE_FR).round_speed * RPM_TO_RAD_S,
+        CHASSISMotor_get_data(WHEEL_MOVE_BL).round_speed * RPM_TO_RAD_S,
+        CHASSISMotor_get_data(WHEEL_MOVE_BR).round_speed * RPM_TO_RAD_S
     };
     
     // [舵向电机] 电流指针
@@ -398,31 +447,19 @@ void Chassis_PowerControl_Total(float total_max_power) {
     PowerLimit_Predict(&Chassis.limiter_wheel, w_c, wheel_spd, 0);
 
     /* ------------------ 3. 优先级分配 (Priority Arbitration) ------------------ */
-    // 逻辑：舵向电机如果转不到位，底盘会乱跑，不仅无法移动还会产生巨大阻力。
-    // 所以：必须优先满足舵向电机的功率需求。
-    
     float steer_need = Chassis.limiter_steer.predict_power;
-    
-    // 计算轮向电机可用的剩余功率
-    // Wheel_Limit = Total - Steer_Need
-    float wheel_limit = total_max_power - steer_need;
-    
-    // 舵向电机允许使用全部功率 (理论上)
-    float steer_limit = total_max_power;
+    float steer_limit = total_max_power * POWER_ALLOC_STEER_RATIO;
+    float wheel_limit = total_max_power - fminf(steer_need, steer_limit);
 
-    // [兜底保护]
-    // 即使舵向吃完了功率，也得给轮子留一口气 (比如10W)，防止除零错误或完全失去动力
-    if (wheel_limit < 10.0f) wheel_limit = 10.0f; 
+    if (wheel_limit < 0.0f)
+    {
+        wheel_limit = 0.0f;
+    }
 
     /* ------------------ 4. 执行限制 (Execution) ------------------ */
-    
-    // 先限制舵向
-    // 虽然给了它很高额度，但如果它本身需求 > 总额度，这里也会进行缩放
-    PowerLimit_Apply(&Chassis.limiter_steer, steer_limit, s_c);
-    
-    // 再限制轮向
-    // 用剩下的功率去限制轮子，这里通常会发生显著的电流缩减
-    PowerLimit_Apply(&Chassis.limiter_wheel, wheel_limit, w_c);
+
+    PowerLimit_Apply(&Chassis.limiter_steer, steer_limit, s_c, steer_spd, 1);
+    PowerLimit_Apply(&Chassis.limiter_wheel, wheel_limit, w_c, wheel_spd, 0);
 
     /* ------------------ 5. 写入结果 (Write Back) ------------------ */
     // 将计算好并缩放过的电流值，写回 Chassis 结构体，等待 Controller 发送
@@ -430,6 +467,56 @@ void Chassis_PowerControl_Total(float total_max_power) {
         *wheel_cur_ptr[i] = w_c[i];
         *steer_cur_ptr[i] = s_c[i];
     }
+}
+
+static float Chassis_GetAvailablePowerLimit(void)
+{
+    float power_limit = (float)Referee_data.Chassis_Power_Limit;
+    float cap_extra_power = 0.0f;
+    float final_limit;
+
+    if (power_limit <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    cap.cache_energy = Referee_data.Buffer_Energy;
+
+    if (power_limit < POWER_LIMIT_REFEREE_MIN)
+    {
+        power_limit = POWER_LIMIT_REFEREE_MIN;
+    }
+
+    if (power_limit > 5.0f)
+    {
+        Supercap_SetPower((uint8_t)(power_limit - 5.0f));
+    }
+    else
+    {
+        Supercap_SetPower(0);
+    }
+
+    if (cap.remain_vol > CAP_MIN_VOL)
+    {
+        cap_extra_power = (cap.remain_vol - CAP_MIN_VOL) * POWER_PER_VOLT;
+        if (cap_extra_power > CAP_EXTRA_POWER_MAX)
+        {
+            cap_extra_power = CAP_EXTRA_POWER_MAX;
+        }
+    }
+    else
+    {
+        cap_extra_power = -10.0f;
+    }
+
+    final_limit = power_limit + cap_extra_power;
+
+    if (final_limit < POWER_LIMIT_MIN)
+    {
+        final_limit = POWER_LIMIT_MIN;
+    }
+
+    return final_limit;
 }
 
 
@@ -712,26 +799,6 @@ void Chassis_Calculator(float vx,float vy,float vw)
     Chassis.turn_BL.set_turn_BL_speed = PID_Cal(&Chassis.turn_BL.chassis_location_pid_turn_BL, Chassis.turn_BL.now, Chassis.turn_BL.set);
     Chassis.turn_BR.set_turn_BR_speed = PID_Cal(&Chassis.turn_BR.chassis_location_pid_turn_BR, Chassis.turn_BR.now, Chassis.turn_BR.set);
 
-    // 舵向角速度前馈：根据目标角变化率预判舵向运动趋势
-    // delta_ecd / dt(ms) * (1000ms/s) * (60s/min) / (8192ecd/rev) = RPM
-    // 化简: delta_ecd * (60000 / 8192) ≈ delta_ecd * 7.3242
-/*     {
-        float steer_sets[4] = {(float)Chassis.turn_FL.set, (float)Chassis.turn_FR.set,
-                               (float)Chassis.turn_BL.set, (float)Chassis.turn_BR.set};
-        float ff[4];
-        for (int i = 0; i < 4; i++) {
-            float delta = steer_sets[i] - steer_last_set[i];
-            // ECD/ms → RPM: delta * 60000 / 8192 (CHASSIS_TASK_TIME = 1ms)
-            ff[i] = delta * (60000.0f / 8192.0f) * STEER_FF_GAIN;
-            steer_last_set[i] = steer_sets[i];
-        }
-        // 叠加前馈到位置环输出的速度目标上
-        Chassis.turn_FL.set_turn_FL_speed += ff[0];
-        Chassis.turn_FR.set_turn_FR_speed += ff[1];
-        Chassis.turn_BL.set_turn_BL_speed += ff[2];
-        Chassis.turn_BR.set_turn_BR_speed += ff[3];
-    } */
-
     // 计算和速度
     vw = vw * WHEEL_TRACK;
     // 分别计算四个轮子的速度大小
@@ -788,25 +855,10 @@ void Chassis_Controller()
     if (Global.Control.mode != 1)
     {
     /*电流设置*/
-/*     CHASSISMotor_set(Chassis.forward_FL.wheel_current_FL, WHEEL_MOVE_FL);
+    CHASSISMotor_set(Chassis.forward_FL.wheel_current_FL, WHEEL_MOVE_FL);
     CHASSISMotor_set(Chassis.forward_FR.wheel_current_FR, WHEEL_MOVE_FR);
     CHASSISMotor_set(Chassis.forward_BL.wheel_current_BL, WHEEL_MOVE_BL);
-    CHASSISMotor_set(Chassis.forward_BR.wheel_current_BR, WHEEL_MOVE_BR); */
-    float Plimit = 0.0f;
-    if (Referee_data.Chassis_Power_Limit == 0)
-        Plimit = 1.0f;
-    else
-        Plimit = power_limt(Chassis.forward_FL.wheel_current_FL, Chassis.forward_FR.wheel_current_FR, Chassis.forward_BL.wheel_current_BL, Chassis.forward_BR.wheel_current_BR,
-                            CHASSISMotor_get_data(WHEEL_MOVE_FL).speed_rpm,
-                            CHASSISMotor_get_data(WHEEL_MOVE_FR).speed_rpm,
-                            CHASSISMotor_get_data(WHEEL_MOVE_BL).speed_rpm,
-                            CHASSISMotor_get_data(WHEEL_MOVE_BR).speed_rpm,
-                            Referee_data.Chassis_Power_Limit);
-    /*电流设置*/
-    CHASSISMotor_set(Plimit * Chassis.forward_FL.wheel_current_FL, WHEEL_MOVE_FL);
-    CHASSISMotor_set(Plimit * Chassis.forward_FR.wheel_current_FR, WHEEL_MOVE_FR);
-    CHASSISMotor_set(Plimit * Chassis.forward_BL.wheel_current_BL, WHEEL_MOVE_BL);
-    CHASSISMotor_set(Plimit * Chassis.forward_BR.wheel_current_BR, WHEEL_MOVE_BR);
+    CHASSISMotor_set(Chassis.forward_BR.wheel_current_BR, WHEEL_MOVE_BR);
 
     CHASSISMotor_set(Chassis.turn_FL.current_steer_FL, WHEEL_TURN_FL);
     CHASSISMotor_set(Chassis.turn_FR.current_steer_FR, WHEEL_TURN_FR);
@@ -841,13 +893,16 @@ void Chassis_Tasks(void)
 {
 #if (USE_CHASSIS !=0 )
     float final_vx, final_vy, final_r;
+    uint8_t use_gimbal_follow = (Global.Chassis.mode == FLOW_Gimbal) /* ||
+                                (Global.Chassis.mode == Navigation && Chassis.is_aligning == 5) */;
 
     final_r = R_speed;
 
-    if (Global.Chassis.mode == FLOW_Gimbal)
+    if (use_gimbal_follow)
     {
         float theta;
 
+        // 导航模式对齐大yaw时，沿用FLOW_Gimbal的跟随解算
         final_r = Chassis_Follow_Update();
         theta = Chassis.relative_angle * (PI / 180.0f);
 
@@ -863,38 +918,15 @@ void Chassis_Tasks(void)
     Rudder_Angle_Calculation(final_vx, final_vy, final_r);
     Chassis_Updater();
     Chassis_Calculator(final_vx, final_vy, final_r);
-/* --- 插入点：功率限制逻辑 --- */
-    
-// A. 获取基础限制 (来自裁判系统)
-    /* float power_limit = (float)Referee_data.Chassis_Power_Limit;
-    if(power_limit < 40.0f) power_limit = 40.0f; // 兜底防止为0
 
-    // B. 获取超级电容状态 (ADAM 改版：线性动态策略 + 低压保护)
-    float cap_extra_power = 0.0f;
-    const float CAP_MIN_VOL = 13.0f;    // 线性透支起始电压
-    const float POWER_PER_VOLT = 15.0f; // 每伏特电压转换的功率系数
-    
-    // 直接读取 supercup 模块更新的 cap 结构体
-    if (cap.remain_vol > CAP_MIN_VOL) 
+    if (Referee_data.Chassis_Power_Limit > 0)
     {
-        // 线性增益：电压越高，透支越多，实现无级变速
-        cap_extra_power = (cap.remain_vol - CAP_MIN_VOL) * POWER_PER_VOLT;
-        // 物理上限保护 (例如电容板最大输出200W)
-        if (cap_extra_power > 200.0f) cap_extra_power = 200.0f;
+        float final_limit = Chassis_GetAvailablePowerLimit();
+        if (final_limit > 0.0f)
+        {
+            Chassis_PowerControl_Total(final_limit);
+        }
     }
-    else 
-    {
-        // 低压保护：电压过低时主动降低功率限制，让电源管理模块给电容回血
-        cap_extra_power = -10.0f; 
-    }
-
-    // 计算最终可用功率，并保留最低行驶功率
-    float final_limit = power_limit + cap_extra_power;
-    if (final_limit < 20.0f) final_limit = 20.0f;
-    
-    // C. 执行双限制器控制 
-    // 修改 Chassis 结构体中的电流值 (wheel_current_xx 和 current_steer_xx)
-    Chassis_PowerControl_Total(final_limit); */
 	// 底盘电机控制
 	Chassis_Controller();
 #endif

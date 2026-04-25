@@ -1,7 +1,7 @@
 /*
  * @Date: 2025-10-27 21:03:17
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-16 00:28:38
+ * @LastEditTime: 2026-04-25 23:58:45
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Shoot.h
  */
 
@@ -32,25 +32,6 @@ enum trigger_speed_e // 拨弹电机速度
     TRIGGER_SPEED_AIM_MID = 2400,
     TRIGGER_SPEED_AIM_LOW = 1200,
 };
-
-/* 单发限位参数 */
-#define TRIGGER_GEAR_RATIO       36        // M2006减速比
-#define TRIGGER_HOLE_NUM         9         // 拨弹盘孔位数
-#define SINGLE_BULLET_ECD        ((TRIGGER_GEAR_RATIO * 8192) / TRIGGER_HOLE_NUM)
-#define SINGLE_SHOT_THRESHOLD    500       // 到位判定阈值
-#define SINGLE_SHOT_SLOWDOWN_ECD 3000      // 接近目标时降速阈值
-#define SINGLE_SHOT_SLOW_SPEED   1200      // 单发末段低速拨弹
-
-/* 单发状态机 */
-typedef enum {
-    SINGLE_IDLE,
-    SINGLE_FIRING,
-    SINGLE_WAITING, // 新增：出弹后的低速维持状态
-    SINGLE_DONE,
-} single_shot_state_e;
-
-// 定义低速待机的转速（建议设为一个很小但足以维持转动的数值）
-#define SINGLE_WAIT_SPEED  500
 
 /* 热量控制状态机 */
 typedef enum {
@@ -111,11 +92,7 @@ typedef struct
     enum shoot_speed_e shoot_speed_set;
     float current[3];
 
-    /*-------单发限位-------*/
-    single_shot_state_e single_shot_state;
-    int32_t trigger_ecd_now;
-    int32_t single_shot_start_ecd;
-    uint8_t last_trigger_mode;
+    /*-------热量控制-------*/
     uint8_t heat_control_enabled;
     trigger_heat_state_e heat_state;
 
