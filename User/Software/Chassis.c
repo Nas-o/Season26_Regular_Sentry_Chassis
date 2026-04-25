@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-26 00:09:46
+ * @LastEditTime: 2026-04-26 00:30:56
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Chassis.c
  */
 
@@ -852,7 +852,7 @@ void Chassis_Calculator(float vx,float vy,float vw)
  */
 void Chassis_Controller()
 {
-    if (Global.Control.mode != 1)
+    if (Global.Control.mode != LOCK)
     {
     /*µÁ¡˜…Ë÷√*/
     CHASSISMotor_set(Chassis.forward_FL.wheel_current_FL, WHEEL_MOVE_FL);
@@ -1014,7 +1014,7 @@ static void Receive_Saltation_Mode(uint8_t data[8])
 
 static void Receive_Trigger_Mode(uint8_t data[8])
 {
-    Global.Shoot.tigger_mode = bytes_to_float(&data[0]);    
+    Global.Shoot.trigger_mode = bytes_to_float(&data[0]);    
 }
 
 static const CanRxEntry_t ChassisRxTable[] = {

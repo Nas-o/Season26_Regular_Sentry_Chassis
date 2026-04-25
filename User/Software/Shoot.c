@@ -34,7 +34,7 @@ Shoot_t Shoot;
  * 1. Referee_data.Barrel_Heat   -> 当前枪口热量
  * 2. Referee_data.Heat_Limit    -> 枪口热量上限
  * 3. Referee_data.CooLing_Value -> 每秒冷却值
- * 4. Global.Shoot.tigger_mode   -> 上层给出的拨弹模式
+ * 4. Global.Shoot.trigger_mode   -> 上层给出的拨弹模式
  *
  * 输出数据：
  * 1. Shoot.trigger_speed_base -> 模式本身想要的基础速度
@@ -414,7 +414,7 @@ void Shoot_Updater()
     Shoot.trigger_speed_now = TriggerMotor_get_data(TRIGGER_MOTOR).speed_rpm;
     Shoot.trigger_current_now = TriggerMotor_get_data(TRIGGER_MOTOR).given_current;
 
-    Shoot.trigger_speed_base = Shoot_GetBaseSpeed(Global.Shoot.tigger_mode);
+    Shoot.trigger_speed_base = Shoot_GetBaseSpeed(Global.Shoot.trigger_mode);
 }
 
 void Shoot_Calculator()
@@ -423,7 +423,7 @@ void Shoot_Calculator()
     Shoot.trigger_speed_set = Shoot_GetHeatControlledSpeed(Shoot.trigger_speed_base);
 
     static int trigger_kill_cnt = 0;
-    if (Global.Shoot.tigger_mode == TRIGGER_CLOSE &&
+    if (Global.Shoot.trigger_mode == TRIGGER_CLOSE &&
         Shoot_AbsFloat(Shoot.trigger_speed_set) < 1.0f)
     {
         trigger_kill_cnt = 0;

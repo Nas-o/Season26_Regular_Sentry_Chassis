@@ -218,8 +218,6 @@ void RC_Controller()
     /*控制模式选择*/
     if ((RC_data.rc.s[0]==RC_SW_DOWN && RC_data.rc.s[1]==RC_SW_DOWN) || (RC_data.online <= 0)) // 左下右下，锁死
         Global.Control.mode = LOCK;
-    else if (RC_data.rc.s[0]==RC_SW_UP && RC_data.rc.s[1]==RC_SW_UP) // 左上右上，键盘控制
-        Global.Control.mode = KEY;
     else
         Global.Control.mode = RC;
     if (Global.Control.mode != RC)
@@ -234,20 +232,8 @@ void RC_Controller()
     Chassis_SetX(RC_data.rc.ch[0] / 40.0f);
     Chassis_SetY(RC_data.rc.ch[1] / 40.0f);
     /*云台控制*/
-    if ((Global.Auto.input.Auto_control_online <= 0 || Global.Auto.mode == NONE || Global.Auto.input.fire == -1) && Global.Gimbal.mode == NORMAL)
-    {
-        Gimbal_SetPitchAngle(Global.Gimbal.input.pitch + RC_data.rc.ch[3] / 2000.0f);
-        Gimbal_SetYawAngle(Global.Gimbal.input.yaw - RC_data.rc.ch[2] / 2000.0f);
-    }
-    /*自瞄控制*/     
-    if (RC_data.rc.s[0]==RC_SW_DOWN && (RC_data.rc.s[1]==RC_SW_MID || RC_data.rc.s[1]==RC_SW_UP)) // 右下,左中||左上，自瞄,射击模式
-    {
-        Global.Auto.mode = CAR;
-    }
-    else
-    {
-        Global.Auto.mode = NONE;
-    }
+    Gimbal_SetPitchAngle(Global.Gimbal.input.pitch + RC_data.rc.ch[3] / 2000.0f);
+    Gimbal_SetYawAngle(Global.Gimbal.input.yaw - RC_data.rc.ch[2] / 2000.0f);
     /*发弹机构控制*/
     if (RC_data.rc.s[1]==RC_SW_UP && (RC_data.rc.s[0]==RC_SW_MID || RC_data.rc.s[0]==RC_SW_DOWN)) // 左上，右中||右下，开启摩擦轮
         Global.Shoot.shoot_mode = READY;
@@ -255,24 +241,20 @@ void RC_Controller()
         Global.Shoot.shoot_mode = CLOSE;
     if (RC_data.rc.ch[4] >= 300 &&
         RC_data.rc.ch[4] <= 660 &&
-        Global.Shoot.shoot_mode != CLOSE &&
-        (Global.Auto.mode == NONE ||
-         Global.Auto.input.fire == 1)) // 滚轮最下头，高速发弹，若自瞄打开，发弹标志位置1允许发弹
-        Global.Shoot.tigger_mode = HIGH;
+        Global.Shoot.shoot_mode != CLOSE)
+        Global.Shoot.trigger_mode = HIGH;
     else if (RC_data.rc.ch[4] >= 50 &&
              RC_data.rc.ch[4] <= 300 &&
-             Global.Shoot.shoot_mode != CLOSE &&
-             (Global.Auto.mode == NONE ||
-              Global.Auto.input.fire == 1)) // 滚轮中部，低速发弹,若自瞄打开，发弹标志位置1允许发弹
-        Global.Shoot.tigger_mode = LOW;
+             Global.Shoot.shoot_mode != CLOSE)
+        Global.Shoot.trigger_mode = LOW;
     else if (RC_data.rc.ch[4] > 660 &&
              Global.Shoot.shoot_mode != CLOSE)
     {
         Global.Shoot.shoot_mode = DEBUG_SHOOT;
-        Global.Shoot.tigger_mode = DEBUG_SHOOT;
+        Global.Shoot.trigger_mode = DEBUG_TRIGGER;
     }
     else
-        Global.Shoot.tigger_mode = TRIGGER_CLOSE;
+        Global.Shoot.trigger_mode = TRIGGER_CLOSE;
 }
 
 /*----------------------------------- 键鼠控制逻辑 --------------------------------------*/

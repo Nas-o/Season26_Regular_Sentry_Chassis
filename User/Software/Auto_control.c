@@ -261,7 +261,7 @@ static void Pack_RefereeData3(uint8_t data[8])
 
 static void Receive_TRIGGER_MODE(uint8_t data[8])
 {
-    Global.Shoot.tigger_mode = bytes_to_float(&data[0]);
+    Global.Shoot.trigger_mode = bytes_to_float(&data[0]);
 }
 
 typedef struct {
