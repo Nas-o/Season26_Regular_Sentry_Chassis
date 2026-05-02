@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-13 21:14:04
+ * @LastEditTime: 2026-05-01 00:07:25
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Chassis.h
  */
 
@@ -44,10 +44,10 @@
 
 
 // 轮子向前时6020编码器的值
-#define X_AXIS_ECD_FL 7131                     
-#define X_AXIS_ECD_FR 5085
-#define X_AXIS_ECD_BL 6463
-#define X_AXIS_ECD_BR 3108
+#define X_AXIS_ECD_FL 918                    
+#define X_AXIS_ECD_FR 4426
+#define X_AXIS_ECD_BL 3020
+#define X_AXIS_ECD_BR 7746
 
 /* 功率限制模型参数 (需根据实际底盘辨识调整) */
 // P = k0*I*w + k1*|w| + k2*(k0*I)^2 + k3
@@ -197,10 +197,13 @@ typedef struct
     }random;
 
     pid_t chassis_follow_pid;
+    pid_t chassis_heading_pid;   // 底盘航向闭环PID（用于颠簸路段自主对齐）
+    float chassis_heading_target; // 底盘目标航向角（世界坐标系，由上位机设定）
     uint8_t is_open_cap;
     float relative_angle;
     float chassis_saltation_mode;
     uint8_t is_aligning;
+    uint8_t alignment_done;   // 颠簸路段一次性对齐完成标志
     PowerLimiter_t limiter_wheel; // 轮向限制器
     PowerLimiter_t limiter_steer; // 舵向限制器
     

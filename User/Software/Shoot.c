@@ -6,6 +6,7 @@
   * @history
   * Version    Date            Author          Modification
   * V1.0.0   2025.10.31       Wang Zihao       1.重新构建发射机构代码结构
+  * V2.0.0   2026.04.29       Copilot          2.重构热量控制为连续预测模型
   @verbatim
   ==============================================================================
 
@@ -23,89 +24,66 @@
 Shoot_t Shoot;
 
 /*
- * ======================== 热量控制模块说明 ========================
+ * ======================== 热量控制模块说明 V2 ========================
  * 模块目标：
- * 1. 在连续拨弹模式下，根据裁判系统提供的热量信息自动调整拨弹速度。
- * 2. 实现“热量余量大时转得快，热量余量小时转得慢，接近上限时仍保持低速转动”的控制目标。
- * 3. 通过预留HeatReserve安全余量，尽量避免把热量推到必须停转的边界。
- * 4. 不使用拨盘孔数、齿轮比等机械模型参数参与热量决策，仅使用热量域数据进行控制。
+ * 1. 在连续拨弹模式下，根据裁判系统热量信息自动、连续地调整拨弹速度。
+ * 2. 热量余量大 -> 拨弹快；热量余量小 -> 拨弹慢；极限 -> 保底微转。
+ * 3. 通过本地热量预测模型补偿裁判数据延迟（50Hz/20ms）。
+ * 4. 通过融合 cooling_buff 自动适配姿态切换、能量机关激活等场景。
  *
- * 输入数据：
- * 1. Referee_data.Barrel_Heat   -> 当前枪口热量
- * 2. Referee_data.Heat_Limit    -> 枪口热量上限
- * 3. Referee_data.CooLing_Value -> 每秒冷却值
- * 4. Global.Shoot.trigger_mode   -> 上层给出的拨弹模式
+ * 数据流：
+ *   裁判系统 UART (50Hz/10Hz/3Hz)
+ *     -> Referee_data.{Heat_Limit, Barrel_Heat, CooLing_Value, cooling_buff}
+ *       -> 本地热量预测: heat_predicted = referee_heat + bullets*10 - C_eff*dt
+ *         -> margin = heat_limit - HEAT_RESERVE - heat_predicted
+ *           -> k_heat = smoothstep(margin / (C_eff * T_window))
+ *             -> trigger_speed_set = base_speed * k_heat
  *
- * 输出数据：
- * 1. Shoot.trigger_speed_base -> 模式本身想要的基础速度
- * 2. Shoot.trigger_speed_set  -> 经过热量状态机修正后的最终速度参考值
+ * 核心公式：
+ *   effective_cooling = CooLing_Value + cooling_buff
+ *   margin = Heat_Limit - HEAT_RESERVE - heat_predicted
+ *   ratio = margin / (effective_cooling * HEAT_WINDOW_SEC)
+ *   k_heat = HEAT_K_MIN + (1 - HEAT_K_MIN) * smoothstep(clamp(ratio, 0, 1))
+ *   speed_final = speed_base * k_heat
  *
- * 状态说明：
- * 1. HEAT_BYPASS
- *    未接收到有效裁判热量数据时，旁路热量控制，直接输出基础速度。
- *    这是当前项目约定的预期行为，不属于保护模式。
- * 2. HEAT_BOOST
- *    热量余量充足，允许按基础速度运行。
- * 3. HEAT_TRACK
- *    热量进入受控利用区，通过平滑插值从BOOST速度过渡到KEEPALIVE速度。
- * 4. HEAT_KEEPALIVE
- *    热量偏紧张时维持低速保活，既尽量保持拨弹连续性，又限制热量继续快速上涨。
- * 5. HEAT_GUARD
- *    热量已经逼近安全余量时，进一步降低到极低保底速度，但不主动停转。
- *
- * 工作顺序：
- * 1. 先由 Shoot_GetBaseSpeed() 生成基础速度。
- * 2. 再由热量状态机决定当前处于哪个热量区间。
- * 3. 最后由 Shoot_GetHeatControlledSpeed() 输出最终的速度参考。
- *
- * 优先级关系：
- * 1. 堵转反转脱困优先级高于常规热量调速。
- * 2. 热量状态机只作用于连续拨弹模式。
- * 3. 热量控制只负责“降速”，主动停转仍只由TRIGGER_CLOSE和故障逻辑触发。
+ * 优先级：堵转反转脱困 > 热量调速 > 基础模式速度
  * =================================================================
  */
 
-/* 返回浮点数绝对值，统一热量控制里的速度、电流比较口径。 */
+/* ======================== 工具函数 ======================== */
+
 static float Shoot_AbsFloat(float value)
 {
     return (value >= 0.0f) ? value : -value;
 }
 
-/* 将输入夹紧到[min_value, max_value]，避免保活速度和插值系数越界。 */
-static float Shoot_ClampFloat(float value, float min_value, float max_value)
+static float Shoot_ClampFloat(float value, float min_val, float max_val)
 {
-    if (value < min_value)
-    {
-        return min_value;
-    }
-
-    if (value > max_value)
-    {
-        return max_value;
-    }
-
+    if (value < min_val) return min_val;
+    if (value > max_val) return max_val;
     return value;
 }
 
 /*
- * 平滑阶跃函数，输入0~1，输出0~1。
- * 与线性插值相比，它在两端斜率为0，能降低TRACK区间切换时的速度顿挫。
+ * smoothstep: 输入 0~1，输出 0~1，两端斜率为 0，过渡平滑。
+ * 公式: 3x^2 - 2x^3
  */
-static float Shoot_SmoothStep01(float value)
+static float Shoot_SmoothStep01(float x)
 {
-    value = Shoot_ClampFloat(value, 0.0f, 1.0f);
-    return value * value * (3.0f - 2.0f * value);
+    x = Shoot_ClampFloat(x, 0.0f, 1.0f);
+    return x * x * (3.0f - 2.0f * x);
 }
 
-// 0 速场景统一返回正方向，调用方需要先保证零速不会直接参与调速计算。
 static float Shoot_SignNonZero(float value)
 {
     return (value >= 0.0f) ? 1.0f : -1.0f;
 }
 
+/* ======================== 基础速度查表 ======================== */
+
 /*
- * 根据上层拨弹模式得到“基础速度”。
- * 这一步只表达模式本身想要的快慢，不做任何热量限幅，热量状态机在后级再二次修正。
+ * 根据上层拨弹模式得到"基础速度"。
+ * 只表达模式本身想要的快慢，不做任何热量限幅。
  */
 static float Shoot_GetBaseSpeed(uint8_t trigger_mode)
 {
@@ -131,297 +109,263 @@ static float Shoot_GetBaseSpeed(uint8_t trigger_mode)
     }
 }
 
+/* ======================== 热量预测模型 ======================== */
+
 /*
- * 判断本周期裁判热量数据是否有效。
- * 这里使用调用方传入的单次快照，避免在同一控制周期里重复读取全局数据造成前后不一致。
+ * 判断裁判热量数据是否有效。
+ * Heat_Limit 和 CooLing_Value 都大于最小阈值才认为有效。
  */
-static uint8_t Shoot_HeatControlAvailable(float heat_limit, float cooling_value)
+static uint8_t Shoot_HeatDataValid(float heat_limit, float cooling_value)
 {
-    if (heat_limit < HEAT_VALID_LIMIT_MIN)
-    {
-        return 0;
-    }
-
-    if (cooling_value < HEAT_VALID_COOLING_MIN)
-    {
-        return 0;
-    }
-
-    return 1;
+    return (heat_limit >= HEAT_VALID_LIMIT_MIN) && (cooling_value >= HEAT_VALID_COOLING_MIN);
 }
 
 /*
- * 当状态机刚从BYPASS接入热量控制时，按当前热量余量直接归位到目标状态。
- * 这能避免“默认先进入BOOST再切换”的瞬态风险。
+ * 同步裁判系统热量快照到本地预测模型。
+ * 每个控制周期都调用，当裁判数据刷新（Barrel_Heat 变化）时自动校准：
+ * 1. 用裁判的真实热量值替换本地预测值，消除累积误差。
+ * 2. 通过 allowance 变化检测新弹丸发出，累加到本地预测。
+ * 3. 融合 cooling_buff 得到有效冷却速率。
  */
-static trigger_heat_state_e Shoot_GetHeatStateFromMargin(float safe_margin, float cooling_value)
+static void Shoot_SyncHeatModel(heat_model_t *model)
 {
-    if (safe_margin >= (HEAT_BOOST_ENTER_FACTOR * cooling_value))
+    float heat_limit    = (float)Referee_data.Heat_Limit;
+    float barrel_heat   = (float)Referee_data.Barrel_Heat;
+    float base_cooling  = (float)Referee_data.CooLing_Value;
+    float cooling_buff  = (float)Referee_data.cooling_buff;
+    uint16_t allowance  = Referee_data.projectile_allowance_17mm;
+
+    /* 有效冷却 = 基础冷却 + 冷却增益buff（能量机关/姿态等带来的额外冷却） */
+    model->effective_cooling = base_cooling + cooling_buff;
+    model->heat_limit = heat_limit;
+
+    /* 检查裁判数据有效性 */
+    if (!Shoot_HeatDataValid(heat_limit, base_cooling))
     {
-        return HEAT_BOOST;
+        model->heat_control_enabled = 0;
+        return;
     }
+    model->heat_control_enabled = 1;
 
-    if (safe_margin >= (HEAT_TRACK_ENTER_FACTOR * cooling_value))
+    /*
+     * 裁判热量校准：当裁判报告的 Barrel_Heat 与我们的快照不同时，
+     * 说明裁判系统发来了新数据帧，用它校准本地预测。
+     */
+    if (barrel_heat != model->heat_ref_snapshot)
     {
-        return HEAT_TRACK;
-    }
-
-    if (safe_margin >= (HEAT_KEEP_ENTER_FACTOR * cooling_value))
-    {
-        return HEAT_KEEPALIVE;
-    }
-
-    return HEAT_GUARD;
-}
-
-/*
- * 更新热量状态机。
- * 核心思想：
- * 1. 先判断热量数据是否有效；无效时进入BYPASS，旁路热量控制。
- * 2. 数据有效后，先减去HeatReserve安全余量，再根据safe_margin与cooling_value的倍数关系切换状态。
- * 3. 各状态采用不同的进入/退出阈值，形成回差，避免在临界点来回抖动。
- */
-static void Shoot_UpdateHeatState(float safe_margin, float cooling_value, uint8_t heat_control_available)
-{
-    if (!heat_control_available)
-    {
-        Shoot.heat_control_enabled = 0;
-        Shoot.heat_state = HEAT_BYPASS;
+        model->heat_predicted = barrel_heat;
+        model->heat_ref_snapshot = barrel_heat;
+        model->allowance_snapshot = allowance;
         return;
     }
 
-    Shoot.heat_control_enabled = 1;
-
-    switch (Shoot.heat_state)
+    /*
+     * 两帧裁判数据之间，通过 allowance 减少量检测新弹丸。
+     * allowance 每减少 1 表示打出 1 发弹丸，累加 10 热量。
+     */
+    if (allowance < model->allowance_snapshot)
     {
-    case HEAT_BYPASS:
-        Shoot.heat_state = Shoot_GetHeatStateFromMargin(safe_margin, cooling_value);
-        break;
+        uint16_t bullets_fired = model->allowance_snapshot - allowance;
+        model->heat_predicted += (float)bullets_fired * HEAT_PER_BULLET_17MM;
+        model->allowance_snapshot = allowance;
+    }
 
-    case HEAT_BOOST:
-        if (safe_margin < (HEAT_BOOST_EXIT_FACTOR * cooling_value))
-        {
-            Shoot.heat_state = HEAT_TRACK;
-        }
-        break;
-
-    case HEAT_TRACK:
-        if (safe_margin > (HEAT_BOOST_ENTER_FACTOR * cooling_value))
-        {
-            Shoot.heat_state = HEAT_BOOST;
-        }
-        else if (safe_margin < (HEAT_KEEP_EXIT_FACTOR * cooling_value))
-        {
-            Shoot.heat_state = HEAT_KEEPALIVE;
-        }
-        break;
-
-    case HEAT_KEEPALIVE:
-        if (safe_margin > (HEAT_TRACK_RETURN_FACTOR * cooling_value))
-        {
-            Shoot.heat_state = HEAT_TRACK;
-        }
-        else if (safe_margin < (HEAT_GUARD_ENTER_FACTOR * cooling_value))
-        {
-            Shoot.heat_state = HEAT_GUARD;
-        }
-        break;
-
-    case HEAT_GUARD:
-        if (safe_margin > (HEAT_GUARD_EXIT_FACTOR * cooling_value))
-        {
-            Shoot.heat_state = HEAT_KEEPALIVE;
-        }
-        break;
-
-    default:
-        Shoot.heat_state = HEAT_BYPASS;
-        Shoot.heat_control_enabled = 0;
-        break;
+    /*
+     * 本地冷却衰减：每控制周期减去 C_eff * dt。
+     * Shoot_Tasks 在 1ms RTOS 任务中调用，dt ≈ 0.001s。
+     * 冷却不会把热量降到 0 以下。
+     */
+    model->heat_predicted -= model->effective_cooling * 0.001f;
+    if (model->heat_predicted < 0.0f)
+    {
+        model->heat_predicted = 0.0f;
     }
 }
 
 /*
- * 计算GUARD状态下的极低保底速度。
+ * 计算热量速度系数 k_heat ∈ [HEAT_K_MIN, 1.0]。
+ *
  * 工作原理：
- * 1. 在已经逼近热量安全余量时，仍然给拨弹盘一个很小的非零转速，避免主观卡死电机。
- * 2. 速度同样受上下限约束，保证不同基础模式下都能统一地落到“低风险但不断转”的区间。
+ * 1. margin = heat_limit - HEAT_RESERVE - heat_predicted
+ *    代表"还能承受多少热量"。
+ * 2. ratio = margin / (C_eff * T_window)
+ *    代表"未来 T_window 秒内，当前余量相对于冷却能力的充裕度"。
+ *    ratio >= 1 表示余量充足，ratio <= 0 表示余量耗尽。
+ * 3. k_heat 通过 smoothstep 平滑映射：
+ *    ratio = 0 -> k_heat = HEAT_K_MIN（保底微转）
+ *    ratio = 1 -> k_heat = 1.0（全速）
+ *    中间段平滑过渡，无速度跳变。
+ *
+ * 为什么参数变化时自动适配：
+ * - 姿态切换导致 Heat_Limit 或 CooLing_Value 变化 → margin 和 C_eff 直接变化
+ * - 能量机关激活导致 cooling_buff 增加 → C_eff 增大 → ratio 增大 → 自动提速
+ * - 等级提升导致冷却/热量上限变化 → 裁判 robot_status 直接反映到 CooLing_Value/Heat_Limit
+ * 所有这些都不需要额外的 if/else 或查表，模型自然适配。
  */
-static float Shoot_GetGuardSpeed(float base_speed)
+static float Shoot_CalcHeatFactor(const heat_model_t *model)
 {
-    float guard_speed = Shoot_ClampFloat(Shoot_AbsFloat(base_speed) * HEAT_GUARD_SPEED_RATIO,
-                                         HEAT_GUARD_SPEED_MIN,
-                                         HEAT_GUARD_SPEED_MAX);
-    return Shoot_SignNonZero(base_speed) * guard_speed;
+    float margin;
+    float window_capacity;
+    float ratio;
+
+    if (!model->heat_control_enabled)
+    {
+        /* 裁判数据无效时旁路热量控制，返回 1.0 表示不限速 */
+        return 1.0f;
+    }
+
+    margin = model->heat_limit - HEAT_RESERVE - model->heat_predicted;
+    window_capacity = model->effective_cooling * HEAT_WINDOW_SEC;
+
+    /* 防止除零 */
+    if (window_capacity < 0.1f)
+    {
+        window_capacity = 0.1f;
+    }
+
+    ratio = margin / window_capacity;
+    ratio = Shoot_ClampFloat(ratio, 0.0f, 1.0f);
+
+    return HEAT_K_MIN + (1.0f - HEAT_K_MIN) * Shoot_SmoothStep01(ratio);
 }
 
 /*
- * 计算KEEPALIVE状态下的低速保活速度。
- * 工作原理：
- * 1. 先计算KEEPALIVE目标速度和GUARD目标速度。
- * 2. 在safe_margin较低时，输出逐渐向GUARD速度靠拢；在safe_margin较高时，再平滑过渡到KEEPALIVE目标速度。
- * 3. 这样既能保证热量紧张时继续转动，又不会在KEEPALIVE与GUARD切换时产生速度跳变。
+ * 根据热量系数得到最终拨弹速度。
+ * base_speed 是模式想要的速度，k_heat 是热量允许的比例。
+ * 当 base_speed 接近 0 时直接返回 0，避免保底速度在停转模式下仍输出。
  */
-static float Shoot_GetKeepaliveSpeed(float base_speed, float safe_margin, float cooling_value)
+static float Shoot_GetHeatControlledSpeed(float base_speed, float k_heat)
 {
-    float base_speed_abs = Shoot_AbsFloat(base_speed);
-    float keep_speed = Shoot_ClampFloat(base_speed_abs * HEAT_KEEP_SPEED_RATIO,
-                                        HEAT_KEEP_SPEED_MIN,
-                                        HEAT_KEEP_SPEED_MAX);
-    float guard_speed = Shoot_AbsFloat(Shoot_GetGuardSpeed(base_speed));
-    float ramp_start = HEAT_GUARD_EXIT_FACTOR * cooling_value;
-    float ramp_end = HEAT_TRACK_RETURN_FACTOR * cooling_value;
-    float x;
-    float k_min;
-    float k_max;
-    float k;
-
-    if (base_speed_abs < 1.0f)
+    if (Shoot_AbsFloat(base_speed) < 1.0f)
     {
         return 0.0f;
     }
-
-    if (ramp_end <= ramp_start)
-    {
-        return Shoot_SignNonZero(base_speed) * keep_speed;
-    }
-
-    if (safe_margin <= ramp_start)
-    {
-        return Shoot_SignNonZero(base_speed) * guard_speed;
-    }
-
-    if (safe_margin >= ramp_end)
-    {
-        return Shoot_SignNonZero(base_speed) * keep_speed;
-    }
-
-    x = (safe_margin - ramp_start) / (ramp_end - ramp_start);
-    k_min = Shoot_ClampFloat(guard_speed / base_speed_abs, 0.0f, 1.0f);
-    k_max = Shoot_ClampFloat(keep_speed / base_speed_abs, 0.0f, 1.0f);
-    k = k_min + (k_max - k_min) * Shoot_SmoothStep01(x);
-    return Shoot_SignNonZero(base_speed) * base_speed_abs * k;
+    return base_speed * k_heat;
 }
 
-/*
- * 计算TRACK状态下的目标速度。
- * 工作原理：
- * 1. TRACK区间不是硬切换，而是从KEEPALIVE速度平滑过渡到BOOST速度。
- * 2. ramp_start对应“靠近KEEPALIVE端”的热量余量，ramp_end对应“靠近BOOST端”的热量余量。
- * 3. k_min使用当前KEEPALIVE速度与基础速度的比值，保证TRACK下界和KEEPALIVE严格对齐，消除状态切换跳变。
- * 4. 过渡曲线采用smoothstep，使中间段柔和、两端衔接平稳。
- */
-static float Shoot_GetTrackSpeed(float base_speed, float safe_margin, float cooling_value)
+/*========================== 单发限位 ==========================*/
+
+static uint8_t Shoot_IsSpeedMode(uint8_t mode)
 {
-    float base_speed_abs = Shoot_AbsFloat(base_speed);
-    float keep_speed;
-    float keep_speed_abs;
-    float ramp_start;
-    float ramp_end;
-    float x;
-    float k_min;
-    float k;
-
-    if (base_speed_abs < 1.0f)
+    switch (mode)
     {
-        return 0.0f;
-    }
-
-    keep_speed = Shoot_GetKeepaliveSpeed(base_speed, HEAT_TRACK_RETURN_FACTOR * cooling_value, cooling_value);
-    keep_speed_abs = Shoot_AbsFloat(keep_speed);
-    ramp_start = HEAT_TRACK_RETURN_FACTOR * cooling_value;
-    ramp_end = HEAT_BOOST_EXIT_FACTOR * cooling_value;
-
-    if (ramp_end <= ramp_start)
-    {
-        return keep_speed;
-    }
-
-    if (safe_margin <= ramp_start)
-    {
-        return keep_speed;
-    }
-
-    if (safe_margin >= ramp_end)
-    {
-        return base_speed;
-    }
-
-    x = (safe_margin - ramp_start) / (ramp_end - ramp_start);
-    k_min = Shoot_ClampFloat(keep_speed_abs / base_speed_abs, 0.0f, 1.0f);
-    k = k_min + (1.0f - k_min) * Shoot_SmoothStep01(x);
-    return Shoot_SignNonZero(base_speed) * base_speed_abs * k;
-}
-
-/*
- * 根据本周期的热量快照输出最终限热速度。
- * 工作原理：
- * 1. 先快照读取Heat_Limit / Barrel_Heat / CooLing_Value。
- * 2. 再减去预留的HeatReserve，得到真正参与状态机判断的safe_margin。
- * 3. 用同一组快照完成“有效性判断 + 状态更新”，避免竞态。
- * 4. 数据无效时返回base_speed，表示旁路热量控制。
- * 5. 数据有效时，按当前热量状态分别输出BOOST/TRACK/KEEPALIVE/GUARD对应速度。
- */
-static float Shoot_GetHeatControlledSpeed(float base_speed)
-{
-    float heat_limit = (float)Referee_data.Heat_Limit;
-    float barrel_heat = (float)Referee_data.Barrel_Heat;
-    float cooling_value = (float)Referee_data.CooLing_Value;
-    float safe_margin = heat_limit - HEAT_RESERVE_MARGIN - barrel_heat;
-    uint8_t heat_control_available = 0;//Shoot_HeatControlAvailable(heat_limit, cooling_value);
-
-    Shoot_UpdateHeatState(safe_margin, cooling_value, heat_control_available);
-
-    if (!Shoot.heat_control_enabled)
-    {
-        // HEAT_BYPASS 输出全基础速度，无热保护。
-        return base_speed;
-    }
-
-    switch (Shoot.heat_state)
-    {
-    case HEAT_BOOST:
-        return base_speed;
-
-    case HEAT_TRACK:
-        return Shoot_GetTrackSpeed(base_speed, safe_margin, cooling_value);
-
-    case HEAT_KEEPALIVE:
-        return Shoot_GetKeepaliveSpeed(base_speed, safe_margin, cooling_value);
-
-    case HEAT_GUARD:
-        return Shoot_GetGuardSpeed(base_speed);
-
-    case HEAT_BYPASS:
+    case HIGH:
+    case MID:
+    case LOW:
+    case DEBUG_TRIGGER:
+    case ONLY_AIM_HIGH:
+    case ONLY_AIM_MID:
+    case ONLY_AIM_LOW:
+        return 1;
     default:
-        // HEAT_BYPASS 输出全基础速度，无热保护。
-        return base_speed;
+        return 0;
     }
 }
 
-void Shoot_Init()
+static void Shoot_StopFireFSM_Update(void)
+{
+    if (Shoot.stop_fire_state == STOP_FIRE_ACTIVE)
+    {
+        uint32_t elapsed = HAL_GetTick() - Shoot.stop_fire_tick;
+        int32_t ecd_err = Shoot.trigger_target_ecd - Shoot.trigger_ecd_now;
+
+        if (ecd_err < 0)
+            ecd_err = -ecd_err;
+
+        if (ecd_err <= SINGLE_DONE_ECD_TH ||
+            elapsed >= STOP_FIRE_TIMEOUT_MS)
+        {
+            Shoot.stop_fire_state = STOP_FIRE_PROCESS;
+        }
+    }
+
+    if (Shoot.stop_fire_state == STOP_FIRE_PROCESS)
+    {
+        Shoot.trigger_target_ecd = Shoot.trigger_ecd_now;
+        Shoot.stop_fire_state = STOP_FIRE_DISABLE;
+    }
+}
+
+/* ======================== 对外接口 ======================== */
+
+void Shoot_Init(void)
 {
     TriggerMotor_init(DJI_M2006, TRIGGER_MOTOR);
     PID_Set(&Shoot.trigger_speed_pid, 8, 0, 3, 0.0f, SHOOTMOTOR_MAX_CURRENT, 0);
+    PID_Set(&Shoot.trigger_angle_pid, 0.20f, 0.0f, 0.0f, 0.0f, TRIGGER_ANGLE_SPEED_MAX, 0.0f);
     Shoot.trigger_speed_base = 0.0f;
     Shoot.trigger_speed_set = 0.0f;
-    Shoot.heat_control_enabled = 0;
-    Shoot.heat_state = HEAT_BYPASS;
+
+    /* 热量预测模型初始化 */
+    Shoot.heat_model.heat_predicted = 0.0f;
+    Shoot.heat_model.heat_ref_snapshot = 0.0f;
+    Shoot.heat_model.allowance_snapshot = 0;
+    Shoot.heat_model.effective_cooling = 0.0f;
+    Shoot.heat_model.heat_limit = 0.0f;
+    Shoot.heat_model.k_heat = 1.0f;
+    Shoot.heat_model.heat_control_enabled = 0;
+
+    Shoot.trigger_ctrl_mode = TRIGGER_CTRL_SPEED;
+    Shoot.stop_fire_state = STOP_FIRE_DISABLE;
+    Shoot.trigger_target_ecd = 0;
+    Shoot.stop_fire_tick = 0;
 }
 
-void Shoot_Updater()
+void Shoot_Updater(void)
 {
+    uint8_t mode = Global.Shoot.trigger_mode;
     Shoot.trigger_speed_now = TriggerMotor_get_data(TRIGGER_MOTOR).speed_rpm;
     Shoot.trigger_current_now = TriggerMotor_get_data(TRIGGER_MOTOR).given_current;
+    Shoot.trigger_ecd_now = (int32_t)TriggerMotor_get_data(TRIGGER_MOTOR).ecd_cnt;
 
+    if (mode == SINGLE && Shoot.last_trigger_mode != SINGLE)
+    {
+        Shoot.trigger_ctrl_mode = TRIGGER_CTRL_ANGLE;
+        Shoot.stop_fire_state = STOP_FIRE_ACTIVE;
+        Shoot.stop_fire_tick = HAL_GetTick();
+
+        Shoot.trigger_target_ecd = Shoot.trigger_ecd_now
+                                 + TRIGGER_ONE_BULLET_ECD
+                                 + TRIGGER_EXTRA_ECD;
+    }
+    else if (Shoot_IsSpeedMode(mode))
+    {
+        Shoot.trigger_ctrl_mode = TRIGGER_CTRL_SPEED;
+        Shoot.stop_fire_state = STOP_FIRE_DISABLE;
+    }
+
+    Shoot_StopFireFSM_Update();
+
+    Shoot.last_trigger_mode = mode;
     Shoot.trigger_speed_base = Shoot_GetBaseSpeed(Global.Shoot.trigger_mode);
+
+    /* 每周期同步裁判数据并更新本地热量预测 */
+    Shoot_SyncHeatModel(&Shoot.heat_model);
+    Shoot.heat_model.k_heat = Shoot_CalcHeatFactor(&Shoot.heat_model);
 }
 
-void Shoot_Calculator()
+void Shoot_Calculator(void)
 {
-    // 常规模式逻辑 (HIGH/MID/LOW/AIM 等)
-    Shoot.trigger_speed_set = Shoot_GetHeatControlledSpeed(Shoot.trigger_speed_base);
+    if (Shoot.trigger_ctrl_mode == TRIGGER_CTRL_ANGLE)
+    {
+        float speed_ref = PID_Cal(&Shoot.trigger_angle_pid,
+                                  (float)Shoot.trigger_ecd_now,
+                                  (float)Shoot.trigger_target_ecd);
 
+        speed_ref = Shoot_ClampFloat(speed_ref,
+                                     -TRIGGER_ANGLE_SPEED_MAX,
+                                     TRIGGER_ANGLE_SPEED_MAX);
+
+        Shoot.trigger_speed_set = speed_ref;
+        Shoot.current[2] = PID_Cal(&Shoot.trigger_speed_pid,
+                                   Shoot.trigger_speed_now,
+                                   speed_ref);
+        return;
+    }
+    /* 用热量系数连续调节拨弹速度 */
+    Shoot.trigger_speed_set = Shoot_GetHeatControlledSpeed(Shoot.trigger_speed_base, Shoot.heat_model.k_heat);
+
+    /* 堵转反转脱困逻辑（优先级高于热量调速） */
     static int trigger_kill_cnt = 0;
     if (Global.Shoot.trigger_mode == TRIGGER_CLOSE &&
         Shoot_AbsFloat(Shoot.trigger_speed_set) < 1.0f)
@@ -435,7 +379,7 @@ void Shoot_Calculator()
 
     if (trigger_kill_cnt > 1)
     {
-        // 堵转反转脱困
+        /* 堵转反转脱困 */
         Shoot.current[2] = PID_Cal(&Shoot.trigger_speed_pid, Shoot.trigger_speed_now, -3000.0f);
         trigger_kill_cnt--;
     }
@@ -445,7 +389,7 @@ void Shoot_Calculator()
     }
 }
 
-void Shoot_Controller()
+void Shoot_Controller(void)
 {
     SHOOTMotor_set(Shoot.current[2], TRIGGER_MOTOR);
 }

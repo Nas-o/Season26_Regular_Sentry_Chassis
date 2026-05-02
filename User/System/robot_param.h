@@ -37,7 +37,7 @@
 #define Rotation_radius     (0.26163) // (m)轮子中心至旋转中心距离
 #define WHEEL_TRACK         (0.370f)  // (m)轮组间距   
 #define WHEEL_RADIUS        (0.064)   // (m)轮子半径
-#define WHEEL_RATIO (15.8f)     // 底盘电机减速比
+#define WHEEL_RATIO (17.4f)     // 底盘电机减速比
 
 //电机CAN ID
 #define WHEEL_MOVE_FL CAN_1_2

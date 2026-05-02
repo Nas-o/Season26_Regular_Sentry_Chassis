@@ -1,7 +1,7 @@
 /*
  * @Date: 2025-10-27 21:03:17
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-25 23:58:45
+ * @LastEditTime: 2026-05-01 20:18:47
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Shoot.h
  */
 
@@ -33,33 +33,43 @@ enum trigger_speed_e // 拨弹电机速度
     TRIGGER_SPEED_AIM_LOW = 1200,
 };
 
-/* 热量控制状态机 */
-typedef enum {
-    HEAT_BYPASS = 0, // 未接收到裁判热量数据时旁路热量控制
-    HEAT_BOOST,
-    HEAT_TRACK,
-    HEAT_KEEPALIVE,
-    HEAT_GUARD,
-} trigger_heat_state_e;
+/*
+ * ======================== 热量控制模型 V2 ========================
+ * 设计思想：
+ * 1. 用"本地热量预测"补偿裁判系统数据延迟（50Hz = 20ms 间隔）。
+ * 2. 用"有效冷却 = 基础冷却 + 冷却增益buff"自动适配姿态切换/能量机关激活等场景。
+ * 3. 用单一连续曲线 k_heat = smoothstep(margin / (C_eff * T_window))
+ *    代替旧的 5 级状态机，余量多速度快、余量少速度慢，天然平滑。
+ * 4. 仅需 3 个可调参数：HEAT_RESERVE、HEAT_WINDOW_SEC、HEAT_K_MIN。
+ * =================================================================
+ */
 
-/* 热量控制参数 */
-#define HEAT_VALID_LIMIT_MIN         1.0f            // Heat_Limit 的最小有效值，小于该值时认为裁判热量上限无效
-#define HEAT_VALID_COOLING_MIN       1.0f            // CooLing_Value 的最小有效值，小于该值时认为裁判冷却数据无效
-#define HEAT_RESERVE_MARGIN          15.0f           // 预留热量安全余量，实际控制时使用 safe_margin = Heat_Limit - Reserve - Barrel_Heat
-#define HEAT_BOOST_ENTER_FACTOR      4.0f            // 进入 BOOST 的阈值系数：safe_margin >= 4 * cooling_value
-#define HEAT_BOOST_EXIT_FACTOR       (10.0f / 3.0f)  // 退出 BOOST 的阈值系数，用于形成 BOOST -> TRACK 回差
-#define HEAT_TRACK_ENTER_FACTOR      2.0f            // BYPASS 首次归位时进入 TRACK 的阈值系数
-#define HEAT_KEEP_EXIT_FACTOR        (5.0f / 3.0f)   // TRACK -> KEEPALIVE 的阈值系数，safe_margin 低于该值时进入保活区
-#define HEAT_KEEP_ENTER_FACTOR       1.0f            // BYPASS 首次归位时进入 KEEPALIVE 的阈值系数
-#define HEAT_TRACK_RETURN_FACTOR     (7.0f / 3.0f)   // KEEPALIVE -> TRACK 的返回阈值系数，同时也是 TRACK 平滑段的下边界
-#define HEAT_GUARD_ENTER_FACTOR      0.50f           // KEEPALIVE -> GUARD 的阈值系数，进入极低速保底区
-#define HEAT_GUARD_EXIT_FACTOR       1.00f           // GUARD -> KEEPALIVE 的返回阈值系数，形成 GUARD 回差
-#define HEAT_KEEP_SPEED_RATIO        0.20f           // KEEPALIVE 目标速度占基础速度的比例
-#define HEAT_KEEP_SPEED_MIN          3840.0f          // KEEPALIVE 最小速度，防止高热量区转速过低导致拨盘停滞
-#define HEAT_KEEP_SPEED_MAX          5760.0f         // KEEPALIVE 最大速度，限制高基础速度模式下的热量继续上冲
-#define HEAT_GUARD_SPEED_RATIO       0.10f           // GUARD 目标速度占基础速度的比例
-#define HEAT_GUARD_SPEED_MIN         2400.0f          // GUARD 最小速度，保证逼近热量边界时拨盘仍持续转动
-#define HEAT_GUARD_SPEED_MAX         3480.0f          // GUARD 最大速度，防止极限热量区仍输出过高转速
+/* ------ 热量控制核心参数 ------ */
+#define HEAT_VALID_LIMIT_MIN    1.0f      // Heat_Limit 最小有效值，低于此值视为裁判数据无效
+#define HEAT_VALID_COOLING_MIN  1.0f      // CooLing_Value 最小有效值
+#define HEAT_RESERVE            15.0f     // 预留安全热量余量（绝对值），防止逼近上限
+#define HEAT_WINDOW_SEC         1.5f      // 前瞻时间窗口（秒），margin / (C_eff * window) 作为 smoothstep 输入
+#define HEAT_K_MIN              0.15f     // 热量极限时保底速度比例（占 base_speed），保持拨盘微转不停
+#define HEAT_PER_BULLET_17MM    10.0f     // 每发 17mm 弹丸产生的热量值（裁判系统固定值）
+/* ------ 单发限位 ------ */
+#define A_BULLET_ECD 85599
+#define TRIGGER_ONE_BULLET_ECD   ((int32_t)A_BULLET_ECD)
+#define TRIGGER_EXTRA_ECD        (150)
+#define SINGLE_DONE_ECD_TH     1200
+#define STOP_FIRE_TIMEOUT_MS     2000U
+#define TRIGGER_ANGLE_SPEED_MAX  6000.0f
+
+/* ------ 热量预测模型数据结构 ------ */
+typedef struct
+{
+    float    heat_predicted;       // 本地预测当前热量
+    float    heat_ref_snapshot;    // 上次裁判同步时的热量快照
+    uint16_t allowance_snapshot;   // 上次裁判同步时的允许发弹量快照（用于检测新弹丸发出）
+    float    effective_cooling;    // 有效冷却 = base_cooling + cooling_buff
+    float    heat_limit;           // 当前热量上限快照
+    float    k_heat;               // 本周期计算出的热量速度系数 [HEAT_K_MIN, 1.0]
+    uint8_t  heat_control_enabled; // 热量控制是否启用（裁判数据有效时为 1）
+} heat_model_t;
 
 /* 内部调用 */
 #define SHOOTMotor_init(type, id)    DJIMotor_Init(type, id)
@@ -72,6 +82,20 @@ typedef enum {
 /* 电机参数 */
 #define SHOOTMOTOR_MAX_CURRENT MAX_CURRENT
 
+    /* 停火有限状态机 */
+    typedef enum
+    {
+        STOP_FIRE_DISABLE = 0,
+        STOP_FIRE_ACTIVE,
+        STOP_FIRE_PROCESS,
+    } stop_fire_state_e;
+
+    typedef enum
+    {
+        TRIGGER_CTRL_SPEED = 0,
+        TRIGGER_CTRL_ANGLE,
+    } trigger_ctrl_mode_e;
+
 /*内部数据类型*/
 typedef struct
 {
@@ -79,6 +103,7 @@ typedef struct
     pid_t shoot_L_speed_pid;
     pid_t shoot_R_speed_pid;
     pid_t trigger_speed_pid;
+    pid_t trigger_angle_pid;
 
     /*-------状态量-------*/
     float shoot_speed_L_now;
@@ -92,9 +117,17 @@ typedef struct
     enum shoot_speed_e shoot_speed_set;
     float current[3];
 
-    /*-------热量控制-------*/
-    uint8_t heat_control_enabled;
-    trigger_heat_state_e heat_state;
+
+    /*-------单发限位-------*/
+    int32_t trigger_ecd_now;
+    int32_t trigger_target_ecd;
+    uint32_t stop_fire_tick;
+    uint8_t last_trigger_mode;
+    trigger_ctrl_mode_e trigger_ctrl_mode;
+    stop_fire_state_e stop_fire_state;
+
+    /*-------热量预测模型-------*/
+    heat_model_t heat_model;
 
 }Shoot_t;
 

@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-26 00:29:38
+ * @LastEditTime: 2026-05-02 10:43:20
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Gimbal.c
  */
 /*
@@ -44,8 +44,8 @@ void Gimbal_Init()
 {
     DMMotor_Init(DM_4310, BIGYAWMotor);
 
-    PID_Set(&Gimbal.big_yaw.big_yaw_speed_pid, 0.021f, 0.0f, 0.0f, 0.0f, 10.0, 1000);
-    PID_Set(&Gimbal.big_yaw.big_yaw_location_pid, 12.0f, 0.0f, 1.0f, 0.0f, 500.0, 100);
+    PID_Set(&Gimbal.big_yaw.big_yaw_speed_pid, 0.021f, 0.0f, 0.0f, 0.0f, 7.0, 100);
+    PID_Set(&Gimbal.big_yaw.big_yaw_location_pid, 6.0f, 0.0f, 1.0f, 0.0f, 500.0, 100);
 
     DMMotor_SetZero(BIG_YAW_ZERO, BIGYAWMotor);
 }
@@ -111,13 +111,19 @@ void Gimbal_Calculator()
         return;
     }
 
-    // Navigation: 速度控制（扫描）
+    // Navigation: 大yaw扫描 / 颠簸路段锁定方向
     if (Global.Chassis.mode == Navigation)
     {
-        Gimbal.big_yaw.big_yaw_speed_set = 80.0f;
-        if (Chassis.is_aligning == 5)
+        if (Chassis.is_aligning == 5 && !Chassis.alignment_done)
         {
-            Gimbal.big_yaw.big_yaw_speed_set = Gimbal.big_yaw.planning_speed;
+            // 颠簸路段未对齐：大yaw位置环锁定方向
+            Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now + Gimbal.big_yaw.planning_speed;
+            Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
+        }
+        else
+        {
+            // 正常导航 或 对齐已完成：速度环扫描
+            Gimbal.big_yaw.big_yaw_speed_set = 80.0f;
         }
         Gimbal.big_yaw.current = PID_Cal(&Gimbal.big_yaw.big_yaw_speed_pid, Gimbal.big_yaw.big_yaw_speed_now, Gimbal.big_yaw.big_yaw_speed_set);
         return;

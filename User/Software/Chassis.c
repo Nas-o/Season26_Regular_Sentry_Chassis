@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-26 00:30:56
+ * @LastEditTime: 2026-05-02 10:18:00
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Chassis.c
  */
 
@@ -163,8 +163,9 @@ void Chassis_Init()
 
 
     /*底盘跟随PID*/
-    PID_Set(&Chassis.chassis_follow_pid, 0.65f, 0.0f, 0.0f, 0.0f, 120, 40);
-    /*底盘功率控制pid*/
+    PID_Set(&Chassis.chassis_follow_pid, 1.0f, 0.0f, 0.0f, 0.0f, 120, 40);
+    /*底盘航向闭环PID（颠簸路段用）*/
+    PID_Set(&Chassis.chassis_heading_pid, 0.5f, 0.0f, 0.0f, 0.0f, 120, 40);
     /*底盘功率控制pid*/
     PID_Set(&chassis_power_pid, 0.04f, 0.0f, 0.01f,0, 0.09f, 0.09f);
 
@@ -573,12 +574,34 @@ static float Chassis_Follow_Update(void)
 {
     Chassis.relative_angle = Chassis_AngleLimit(Chassis.relative_angle);
 
-    if (fabsf(Chassis.relative_angle) <= 5.0f)
+    if (fabsf(Chassis.relative_angle) <= 2.0f)
     {
         return 0.0f;
     }
 
     return -PID_Cal(&Chassis.chassis_follow_pid, Chassis.relative_angle, 0.0f) * RPM_TO_RAD_S;
+}
+
+/**
+ * @brief  底盘航向闭环（颠簸路段用）
+ * @note   底盘航向 = imu.yaw_cnt - relative_angle
+ *         通过PID输出旋转分量，让底盘自行对齐目标方向
+ *         大yaw继续扫描不受影响
+ * @return float 旋转分量vw (rad/s)
+ */
+static float Chassis_Heading_Align(void)
+{
+    // 底盘当前绝对航向 = 云台IMU航向 - 云台相对底盘偏角
+    float chassis_yaw_now = imu.yaw_cnt - Chassis.relative_angle;
+    // 航向误差（限制在±180°内）
+    float heading_err = Chassis_AngleLimit(Chassis.chassis_heading_target - chassis_yaw_now);
+
+    if (fabsf(heading_err) <= 2.0f)
+    {
+        return 0.0f;
+    }
+
+    return PID_Cal(&Chassis.chassis_heading_pid, 0.0f, heading_err) * RPM_TO_RAD_S;
 }
 
 /*************************Rudder_Angle_calculation****************************/
@@ -893,8 +916,21 @@ void Chassis_Tasks(void)
 {
 #if (USE_CHASSIS !=0 )
     float final_vx, final_vy, final_r;
-    uint8_t use_gimbal_follow = (Global.Chassis.mode == FLOW_Gimbal) /* ||
-                                (Global.Chassis.mode == Navigation && Chassis.is_aligning == 5) */;
+    // 非is_aligning==5时重置对齐完成标志
+    if (Chassis.is_aligning != 5)
+    {
+        Chassis.alignment_done = 0;
+    }
+
+    // 对齐中且relative_angle在5°以内，标记对齐完成
+    if (Chassis.is_aligning == 5 && !Chassis.alignment_done && fabsf(Chassis.relative_angle) <= 5.0f)
+    {
+        Chassis.alignment_done = 1;
+    }
+
+    // 仅在对齐未完成时跟随大yaw
+    uint8_t use_gimbal_follow = (Global.Chassis.mode == FLOW_Gimbal) ||
+                                (Global.Chassis.mode == Navigation && Chassis.is_aligning == 5 && !Chassis.alignment_done);
 
     final_r = R_speed;
 
@@ -902,7 +938,6 @@ void Chassis_Tasks(void)
     {
         float theta;
 
-        // 导航模式对齐大yaw时，沿用FLOW_Gimbal的跟随解算
         final_r = Chassis_Follow_Update();
         theta = Chassis.relative_angle * (PI / 180.0f);
 
@@ -919,14 +954,14 @@ void Chassis_Tasks(void)
     Chassis_Updater();
     Chassis_Calculator(final_vx, final_vy, final_r);
 
-    if (Referee_data.Chassis_Power_Limit > 0)
-    {
-        float final_limit = Chassis_GetAvailablePowerLimit();
-        if (final_limit > 0.0f)
-        {
-            Chassis_PowerControl_Total(final_limit);
-        }
-    }
+    // if (Referee_data.Chassis_Power_Limit > 0)
+    // {
+    //     float final_limit = Chassis_GetAvailablePowerLimit();
+    //     if (final_limit > 0.0f)
+    //     {
+    //         Chassis_PowerControl_Total(final_limit);
+    //     }
+    // }
 	// 底盘电机控制
 	Chassis_Controller();
 #endif

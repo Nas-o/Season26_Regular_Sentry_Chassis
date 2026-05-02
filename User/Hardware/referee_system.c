@@ -42,6 +42,9 @@ ext_hurt_data_t hurt_data;                       // 伤害状态数据(受到攻击后发送)
 ext_shoot_data_t shoot_data;                     // 实时射击数据(子弹射速/频率等)
 ext_projectile_allowance_t projectile_allowance; // 弹丸剩余发射许可(弹量限制)
 ext_rfid_status_t rfid_status;                   // 机器人RFID状态(检查点位状态)
+/*----------- 增益与哨兵决策数据 -----------*/
+ext_buff_t robot_buff;                             // 机器人增益数据(3Hz，含冷却增益)
+ext_sentry_info_t sentry_data;                     // 哨兵决策数据(3Hz，含姿态/能量机关)
 /*----------- 交互数据 -----------*/
 ext_robot_interaction_data_t robot_interaction_data; // 机器人交互数据(自定义通信内容)
 ext_custom_info_t exchange_data;                     // 自定义UI显示数据(选手端特定位置字符显示)
@@ -70,6 +73,9 @@ static void referee_struct_init(void)
     memset(&projectile_allowance, 0, sizeof(ext_projectile_allowance_t));
     // 机器人RFID状态
     memset(&rfid_status, 0, sizeof(ext_rfid_status_t));
+    // 增益与哨兵决策数据
+    memset(&robot_buff, 0, sizeof(ext_buff_t));
+    memset(&sentry_data, 0, sizeof(ext_sentry_info_t));
     // 机器人交互数据
     memset(&robot_interaction_data, 0, sizeof(ext_robot_interaction_data_t));
     // 选手端特定位置显示字符
@@ -92,6 +98,10 @@ static void required_Data() //后续可根据需要自行添加
         Referee_data.Outpost_HP = game_robot_HP.ally_outpost_HP;
         Referee_data.Baseeee_HP = game_robot_HP.ally_base_HP;
 
+        /* 热量控制增强字段 */
+        Referee_data.cooling_buff = robot_buff.cooling_buff;
+        Referee_data.sentry_posture = (uint8_t)((sentry_data.sentry_info_2 >> 12) & 0x03);
+        Referee_data.energy_rune_activatable = (uint8_t)((sentry_data.sentry_info_2 >> 14) & 0x01);
 }
 static void referee_data_solve(uint8_t *frame)
 {
@@ -154,7 +164,7 @@ static void referee_data_solve(uint8_t *frame)
         break;
         case BUFF_MUSK_CMD_ID:
         {
-            //memcpy(&robot_buff, frame + index, sizeof(ext_buff_t));
+            memcpy(&robot_buff, frame + index, sizeof(ext_buff_t));
         }
         break;
         /* case AERIAL_ROBOT_ENERGY_CMD_ID:
@@ -234,7 +244,7 @@ static void referee_data_solve(uint8_t *frame)
         break;
 		case SENTRY_DATA_CMD_ID:
         {
-            //memcpy(&sentry_data, frame + index, sizeof(ext_sentry_info_t));
+            memcpy(&sentry_data, frame + index, sizeof(ext_sentry_info_t));
         }
         break;
 		case RADAR_DATA_CMD_ID:

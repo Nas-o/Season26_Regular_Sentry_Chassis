@@ -29,6 +29,11 @@ typedef struct // 自定义结构体，需在函数中赋值，然后在 FREERTOS 里调用  后续可根
     uint16_t Outpost_HP;                //前哨战血量
     uint16_t Baseeee_HP;                //基地血量
     float rest_time;
+
+    /* 热量控制增强字段 */
+    uint16_t cooling_buff;              //射击热量冷却增益具体值（来自 ext_buff_t 0x0204，值为 x 表示冷却增加 x/s）
+    uint8_t  sentry_posture;            //哨兵当前姿态（来自 ext_sentry_info_t 0x020D bit12-13：1进攻 2防御 3移动）
+    uint8_t  energy_rune_activatable;   //己方能量机关是否可激活（bit14：1为可激活）
     
 
 
