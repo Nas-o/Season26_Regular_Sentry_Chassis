@@ -168,6 +168,7 @@ void dm_motor_fbdata(DM_motor_t *motor, uint8_t *rx_data)
 	else if (delta < -P_MAX)
 		delta += 2 * P_MAX;
 	motor->para.pos_cnt += delta;
+
     // process data
      motor->para.angle_cnt = motor->para.pos_cnt * POS_TO_ANGLE;
     

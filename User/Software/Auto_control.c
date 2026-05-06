@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-04-18 08:18:45
+ * @LastEditTime: 2026-05-02 20:26:56
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Auto_control.c
  */
 
@@ -259,10 +259,6 @@ static void Pack_RefereeData3(uint8_t data[8])
     float_to_bytes(Referee_data.Initial_SPEED, &data[4]);
 } 
 
-static void Receive_TRIGGER_MODE(uint8_t data[8])
-{
-    Global.Shoot.trigger_mode = bytes_to_float(&data[0]);
-}
 
 typedef struct {
     uint16_t    id;

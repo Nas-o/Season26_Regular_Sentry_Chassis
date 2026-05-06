@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-02 10:18:00
+ * @LastEditTime: 2026-05-04 12:12:18
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Chassis.c
  */
 
@@ -49,12 +49,27 @@ int Hp_Time_Wait = 0;
 uint32_t last_gimbal_msg_time;
 float X_speed, Y_speed, R_speed;
 pid_t chassis_power_pid; // 功率闭环控制pid
+pid_t buffer_energy_pid; // 缓冲能量闭环PID（第1层防御）
+pid_t power_feedback_pid; // 实测功率反馈PID（第2层防御）
+
 #define POWER_ALLOC_STEER_RATIO 0.8f
 #define POWER_LIMIT_REFEREE_MIN 40.0f
 #define POWER_LIMIT_MIN 20.0f
 #define CAP_MIN_VOL 13.0f
 #define POWER_PER_VOLT 15.0f
 #define CAP_EXTRA_POWER_MAX 200.0f
+
+/* ===== 三层防御参数 ===== */
+// 第1层：缓冲能量保护
+#define BUFFER_ENERGY_TARGET 50.0f   // 缓冲能量目标值(J)，保持在安全水位
+#define BUFFER_ENERGY_DANGER 20.0f   // 危险阈值，低于此值强制大幅降功率
+#define BUFFER_DERATING_MAX 40.0f    // 缓冲保护最大扣减功率(W)
+
+// 第2层：实测功率反馈修正
+#define POWER_FEEDBACK_MAX_CORR 20.0f // 反馈修正最大扣减量(W)
+
+// 第3层：安全余量系数（补偿模型系统性误差）
+#define POWER_SAFETY_MARGIN 0.92f    // 给模型预测打92%的折扣
 
 float power_limt(float FL_current, float FR_current, float BL_current, float BR_current,
                  float FL_speed, float FR_speed, float BL_speed, float BR_speed, float max_p)
@@ -167,7 +182,11 @@ void Chassis_Init()
     /*底盘航向闭环PID（颠簸路段用）*/
     PID_Set(&Chassis.chassis_heading_pid, 0.5f, 0.0f, 0.0f, 0.0f, 120, 40);
     /*底盘功率控制pid*/
-    PID_Set(&chassis_power_pid, 0.04f, 0.0f, 0.01f,0, 0.09f, 0.09f);
+    PID_Set(&chassis_power_pid, 0.04f, 0.0f, 0.01f, 0, 0.09f, 0.09f);
+    /*缓冲能量闭环PID：输入=缓冲能量误差(J)，输出=功率扣减量(W)*/
+    PID_Set(&buffer_energy_pid, 1.2f, 0.05f, 0.0f, 0, BUFFER_DERATING_MAX, 10.0f);
+    /*实测功率反馈PID：输入=实测功率与限制的差(W)，输出=功率修正量(W)*/
+    PID_Set(&power_feedback_pid, 0.6f, 0.02f, 0.0f, 0, POWER_FEEDBACK_MAX_CORR, 8.0f);
 
     //默认地盘跟随模式
     Global.Chassis.mode = FLOW_Chassis;
@@ -475,6 +494,8 @@ static float Chassis_GetAvailablePowerLimit(void)
     float power_limit = (float)Referee_data.Chassis_Power_Limit;
     float cap_extra_power = 0.0f;
     float final_limit;
+    float buffer_derating = 0.0f;   // 第1层：缓冲能量保护扣减
+    float feedback_derating = 0.0f; // 第2层：实测功率反馈扣减
 
     if (power_limit <= 0.0f)
     {
@@ -497,6 +518,48 @@ static float Chassis_GetAvailablePowerLimit(void)
         Supercap_SetPower(0);
     }
 
+    /* ========== 第1层防御：缓冲能量闭环保护 ========== */
+    // 核心思想：缓冲能量是裁判系统对"你是否超功率"的直接反馈
+    // 如果缓冲在下降（低于目标值），说明实际功率已超标，必须收紧
+    {
+        float buffer_energy = (float)Referee_data.Buffer_Energy;
+        
+        // PID控制：让缓冲能量维持在目标值附近
+        // 当buffer < target时，误差为正 → 输出为正 → 扣减功率
+        buffer_derating = PID_Cal(&buffer_energy_pid, buffer_energy, BUFFER_ENERGY_TARGET);
+        
+        // 只允许扣减（正值），不允许通过此通道加功率
+        if (buffer_derating < 0.0f)
+        {
+            buffer_derating = 0.0f;
+        }
+        
+        // 危险模式：缓冲能量极低时强制大幅降功率
+        if (buffer_energy < BUFFER_ENERGY_DANGER)
+        {
+            buffer_derating = BUFFER_DERATING_MAX;
+        }
+    }
+
+    /* ========== 第2层防御：实测功率反馈修正 ========== */
+    // 核心思想：用裁判系统/超电测量的实际底盘功率，修正模型预测的系统性偏差
+    {
+        float chassis_power_actual = cap.Chassis_power; // 超电板测量的实际底盘功率
+        
+        // 只在有有效功率读数时启用反馈
+        if (chassis_power_actual > 5.0f)
+        {
+            // 当实测功率 > 限制功率时，误差为正 → 输出为正 → 扣减
+            feedback_derating = PID_Cal(&power_feedback_pid, chassis_power_actual, power_limit);
+            
+            if (feedback_derating < 0.0f)
+            {
+                feedback_derating = 0.0f;
+            }
+        }
+    }
+
+    /* ========== 超电额外功率计算 ========== */
     if (cap.remain_vol > CAP_MIN_VOL)
     {
         cap_extra_power = (cap.remain_vol - CAP_MIN_VOL) * POWER_PER_VOLT;
@@ -510,7 +573,15 @@ static float Chassis_GetAvailablePowerLimit(void)
         cap_extra_power = -10.0f;
     }
 
+    /* ========== 综合计算最终功率限制 ========== */
     final_limit = power_limit + cap_extra_power;
+    
+    // 第3层防御：安全余量系数（补偿模型的系统性低估）
+    final_limit *= POWER_SAFETY_MARGIN;
+    
+    // 应用第1层和第2层的扣减
+    final_limit -= buffer_derating;
+    final_limit -= feedback_derating;
 
     if (final_limit < POWER_LIMIT_MIN)
     {
@@ -954,14 +1025,14 @@ void Chassis_Tasks(void)
     Chassis_Updater();
     Chassis_Calculator(final_vx, final_vy, final_r);
 
-    // if (Referee_data.Chassis_Power_Limit > 0)
-    // {
-    //     float final_limit = Chassis_GetAvailablePowerLimit();
-    //     if (final_limit > 0.0f)
-    //     {
-    //         Chassis_PowerControl_Total(final_limit);
-    //     }
-    // }
+    if (Referee_data.Chassis_Power_Limit > 0)
+    {
+        float final_limit = Chassis_GetAvailablePowerLimit();
+        if (final_limit > 0.0f)
+        {
+            Chassis_PowerControl_Total(final_limit);
+        }
+    }
 	// 底盘电机控制
 	Chassis_Controller();
 #endif
@@ -1049,7 +1120,8 @@ static void Receive_Saltation_Mode(uint8_t data[8])
 
 static void Receive_Trigger_Mode(uint8_t data[8])
 {
-    Global.Shoot.trigger_mode = bytes_to_float(&data[0]);    
+    Global.Shoot.trigger_mode = bytes_to_float(&data[0]);   
+    Global.Auto.mode          = bytes_to_float(&data[4]);
 }
 
 static const CanRxEntry_t ChassisRxTable[] = {

@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-02 10:43:20
+ * @LastEditTime: 2026-05-05 19:41:06
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Gimbal.c
  */
 /*
@@ -23,6 +23,7 @@
 #include "Gimbal.h"
 #include "Chassis.h"
 #include "Global_status.h"
+#include "Auto_control.h"
 
 #include "User_math.h"
 #include "remote_control.h"
@@ -80,9 +81,22 @@ void Gimbal_Updater()
     last_chassis_mode = Global.Chassis.mode;
 
     /*------目标量更新------*/
-    if (Global.Control.mode == LOCK || Global.Chassis.mode == FLOW_Chassis || Global.Chassis.mode == Navigation)
+    if (Global.Control.mode == LOCK || Global.Chassis.mode == FLOW_Chassis)
     {
-        // 泄力 / FLOW_Chassis / Navigation：目标跟随当前位置
+        // 泄力 / FLOW_Chassis：目标跟随当前位置
+        Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now;
+    }
+    else if (Global.Chassis.mode == Navigation && Auto_data.is_scaning == 0)
+    {
+        // 自瞄锁定：上板发的是编码器坐标系目标，转成IMU世界角
+        float current_encoder = Chassis.relative_angle;
+        float target_encoder  = Global.Gimbal.input.yaw;
+        float delta_encoder   = target_encoder - current_encoder;
+        Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now + delta_encoder;
+    }
+    else if (Global.Chassis.mode == Navigation)
+    {
+        // Navigation + 扫描：目标跟随当前位置
         Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now;
     }
     else
@@ -103,27 +117,38 @@ void Gimbal_Updater()
  */
 void Gimbal_Calculator()
 {
+    uint8_t is_omni_sence = (Chassis.is_aligning != 5 && Gimbal.big_yaw.planning_speed != 0);
     // FLOW_Chassis: 大yaw泄力
-    if (Global.Chassis.mode == FLOW_Chassis)
+    if (Global.Chassis.mode == FLOW_Chassis && Global.Auto.mode != CAR)
     {
         Gimbal.big_yaw.big_yaw_speed_set = 0.0f;
         Gimbal.big_yaw.current = 0.0f;
         return;
     }
 
-    // Navigation: 大yaw扫描 / 颠簸路段锁定方向
+    // Navigation: 大yaw跟随小yaw / 扫描 / 颠簸路段锁定方向
     if (Global.Chassis.mode == Navigation)
     {
-        if (Chassis.is_aligning == 5 && !Chassis.alignment_done)
+        if (Auto_data.is_scaning == 0)
+        {
+            // 导航锁定目标：大yaw位置+速度双环跟随小yaw方向
+            Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
+        }
+        else if (Chassis.is_aligning == 5 && !Chassis.alignment_done)
         {
             // 颠簸路段未对齐：大yaw位置环锁定方向
             Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now + Gimbal.big_yaw.planning_speed;
             Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
         }
+        else if (Chassis.is_aligning != 5 && Gimbal.big_yaw.planning_speed != 0)
+        {
+            Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.planning_speed;
+            Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
+        }
         else
         {
             // 正常导航 或 对齐已完成：速度环扫描
-            Gimbal.big_yaw.big_yaw_speed_set = 80.0f;
+            Gimbal.big_yaw.big_yaw_speed_set = 160.0f;
         }
         Gimbal.big_yaw.current = PID_Cal(&Gimbal.big_yaw.big_yaw_speed_pid, Gimbal.big_yaw.big_yaw_speed_now, Gimbal.big_yaw.big_yaw_speed_set);
         return;
