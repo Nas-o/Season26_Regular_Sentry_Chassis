@@ -273,7 +273,7 @@ void Chassis_Task(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    Chassis_Tasks();
+    Chassis_Execute_Update();
     Supercup_SendData();
     osDelay(1);
   }

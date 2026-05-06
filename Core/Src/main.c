@@ -90,7 +90,7 @@ extern DMA_HandleTypeDef hdma_uart7_rx;
 
 /**
   * @brief  The application entry point.
-  * @retval int
+  * @retval in
   */
 int main(void)
 {

@@ -162,13 +162,12 @@ void dm_motor_fbdata(DM_motor_t *motor, uint8_t *rx_data)
 
 	// process the data
     // count cnt
-	float delta = motor->para.pos - motor->para.last_pos;
-	if (delta > P_MAX)
-		delta -= 2 * P_MAX;
-	else if (delta < -P_MAX)
-		delta += 2 * P_MAX;
-	motor->para.pos_cnt += delta;
-
+    if (motor->para.last_pos > 12 && motor->para.pos < -12)
+        motor->para.pos_cnt += ((P_MAX - motor->para.last_pos) + (motor->para.pos + P_MAX));
+    else if (motor->para.last_pos < -12 && motor->para.pos > 12)
+        motor->para.pos_cnt -= ((P_MAX - motor->para.pos) + motor->para.last_pos + P_MAX);
+    else
+        motor->para.pos_cnt += (motor->para.pos - motor->para.last_pos);
     // process data
      motor->para.angle_cnt = motor->para.pos_cnt * POS_TO_ANGLE;
     

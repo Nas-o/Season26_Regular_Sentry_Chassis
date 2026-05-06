@@ -12,6 +12,7 @@
 #include "supercup.h"
 #include "string.h"
 #include "stm32h7xx_hal.h"
+#include "referee_system.h"
 
 Supercap_t cap;
 Supercap_send_t send_data_cap;
@@ -71,7 +72,7 @@ void Supercup_SendData(void)
     Supercap_send_t send_data;
 
     send_data.setPower = cap.set_max_power;
-    send_data.cacheEnergy = cap.cache_energy;
+    send_data.cacheEnergy = (uint16_t)Referee_data.Buffer_Energy; // 直接用裁判原始值，避免uint8截断
     send_data.cacheEnergylimit = cap.cacheEnergylimit;
 
     memcpy(can_send_data, &send_data, sizeof(Supercap_send_t));

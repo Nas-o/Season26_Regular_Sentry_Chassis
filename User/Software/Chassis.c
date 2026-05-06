@@ -48,28 +48,54 @@ int Last_Hp = 400;
 int Hp_Time_Wait = 0;
 uint32_t last_gimbal_msg_time;
 float X_speed, Y_speed, R_speed;
-pid_t chassis_power_pid; // 功率闭环控制pid
-pid_t buffer_energy_pid; // 缓冲能量闭环PID（第1层防御）
-pid_t power_feedback_pid; // 实测功率反馈PID（第2层防御）
+pid_t chassis_power_pid; // 功率闭环控制pid (legacy, 保留备用)
 
 #define POWER_ALLOC_STEER_RATIO 0.8f
 #define POWER_LIMIT_REFEREE_MIN 40.0f
 #define POWER_LIMIT_MIN 20.0f
-#define CAP_MIN_VOL 13.0f
-#define POWER_PER_VOLT 15.0f
-#define CAP_EXTRA_POWER_MAX 200.0f
 
-/* ===== 三层防御参数 ===== */
-// 第1层：缓冲能量保护
-#define BUFFER_ENERGY_TARGET 50.0f   // 缓冲能量目标值(J)，保持在安全水位
-#define BUFFER_ENERGY_DANGER 20.0f   // 危险阈值，低于此值强制大幅降功率
-#define BUFFER_DERATING_MAX 40.0f    // 缓冲保护最大扣减功率(W)
+/* ============================================================
+ * 慢环功率预算参数 (PowerBudget)
+ * 设计原则：快环开环限流保平滑，慢环修正预算保能量
+ * ============================================================ */
 
-// 第2层：实测功率反馈修正
-#define POWER_FEEDBACK_MAX_CORR 20.0f // 反馈修正最大扣减量(W)
+// 第1层：裁判长期可持续基准
+#define POWER_SAFETY_MARGIN 0.93f    // 5%公差 + 模型误差 → 打93折
 
-// 第3层：安全余量系数（补偿模型系统性误差）
-#define POWER_SAFETY_MARGIN 0.92f    // 给模型预测打92%的折扣
+// 第2层：超电状态管控
+#define CAP_MIN_VOL         13.0f    // 超电保护电压(V)，低于此禁止放电
+#define CAP_ALLOW_VOL       16.0f    // 允许放电电压阈值
+#define CAP_FULL_VOL        24.0f    // 超电满电压
+#define CAP_EXTRA_RATIO     0.5f     // 超电额外功率上限 = 裁判限制 * 此比例（按比例浮动）
+#define CAP_RELEASE_RATE    0.5f     // 放开速率(W/次)，慢
+#define CAP_TIGHTEN_RATE    3.0f     // 收紧速率(W/次)，快
+#define CAP_VOLT_DROP_THRESH 0.05f   // 电压下降率阈值(V/次)
+
+// 第3层：Buffer Energy 慢闭环
+#define BUFFER_TARGET       45.0f    // 目标缓冲能量(J)
+#define BUFFER_DEADBAND     5.0f     // 死区(J)：target±deadband内不动作
+#define BUFFER_DANGER       15.0f    // 危险阈值(J)
+#define BUFFER_DERATING_MAX 50.0f    // 最大扣减量(W)
+#define BUFFER_TIGHTEN_RATE 2.0f     // 收紧速率(W/次)
+#define BUFFER_RELEASE_RATE 0.3f     // 释放速率(W/次)
+
+// 第4层：实测功率滤波保护
+#define POWER_LPF_ALPHA       0.02f  // 低通滤波系数 (越小越平滑, ~50ms时间常数@1ms)
+#define POWER_OVER_THRESHOLD  0.0f   // 超功率死区(W)：超出P_target才触发
+#define POWER_DERATING_MAX    25.0f  // 最大扣减量(W)
+#define POWER_TIGHTEN_RATE    1.5f   // 收紧速率(W/次)
+#define POWER_RELEASE_RATE    0.2f   // 释放速率(W/次)
+
+// 慢环更新周期
+#define BUDGET_UPDATE_PERIOD_MS 20   // 每20ms更新一次慢环
+
+/* 慢环状态变量 */
+static float s_cap_extra_power = 0.0f;      // 超电额外功率（状态量）
+static float s_buffer_derating = 0.0f;      // 缓冲能量扣减量
+static float s_power_derating = 0.0f;       // 实测功率扣减量
+static float s_power_measured_filt = 0.0f;  // 实测功率低通滤波值
+static float s_cap_vol_last = 0.0f;         // 上次超电电压（用于算下降率）
+static uint32_t s_budget_last_tick = 0;     // 上次更新时间戳
 
 float power_limt(float FL_current, float FR_current, float BL_current, float BR_current,
                  float FL_speed, float FR_speed, float BL_speed, float BR_speed, float max_p)
@@ -181,12 +207,16 @@ void Chassis_Init()
     PID_Set(&Chassis.chassis_follow_pid, 1.0f, 0.0f, 0.0f, 0.0f, 120, 40);
     /*底盘航向闭环PID（颠簸路段用）*/
     PID_Set(&Chassis.chassis_heading_pid, 0.5f, 0.0f, 0.0f, 0.0f, 120, 40);
-    /*底盘功率控制pid*/
+    /*底盘功率控制pid (legacy保留)*/
     PID_Set(&chassis_power_pid, 0.04f, 0.0f, 0.01f, 0, 0.09f, 0.09f);
-    /*缓冲能量闭环PID：输入=缓冲能量误差(J)，输出=功率扣减量(W)*/
-    PID_Set(&buffer_energy_pid, 1.2f, 0.05f, 0.0f, 0, BUFFER_DERATING_MAX, 10.0f);
-    /*实测功率反馈PID：输入=实测功率与限制的差(W)，输出=功率修正量(W)*/
-    PID_Set(&power_feedback_pid, 0.6f, 0.02f, 0.0f, 0, POWER_FEEDBACK_MAX_CORR, 8.0f);
+    
+    /* 慢环功率预算状态初始化 */
+    s_cap_extra_power = 0.0f;
+    s_buffer_derating = 0.0f;
+    s_power_derating = 0.0f;
+    s_power_measured_filt = 0.0f;
+    s_cap_vol_last = 0.0f;
+    s_budget_last_tick = 0;
 
     //默认地盘跟随模式
     Global.Chassis.mode = FLOW_Chassis;
@@ -489,105 +519,161 @@ void Chassis_PowerControl_Total(float total_max_power) {
     }
 }
 
-static float Chassis_GetAvailablePowerLimit(void)
+/**
+ * @brief  慢环功率预算更新 (每20ms调用一次)
+ * @note   快环开环限流，慢环修正功率预算
+ *         - 电流输出不追实时功率抖动
+ *         - 功率上限 final_limit 被 buffer/滤波功率/超电状态 慢慢收紧或放开
+ * @return float 本周期的功率预算(W)
+ */
+static float PowerBudget_Update(void)
 {
-    float power_limit = (float)Referee_data.Chassis_Power_Limit;
-    float cap_extra_power = 0.0f;
-    float final_limit;
-    float buffer_derating = 0.0f;   // 第1层：缓冲能量保护扣减
-    float feedback_derating = 0.0f; // 第2层：实测功率反馈扣减
-
-    if (power_limit <= 0.0f)
+    /* ========== 时间门控：每 BUDGET_UPDATE_PERIOD_MS 更新一次 ========== */
+    uint32_t now_tick = HAL_GetTick();
+    static float s_last_budget = 60.0f; // 上次输出的预算，用于非更新周期直接返回
+    
+    if ((now_tick - s_budget_last_tick) < BUDGET_UPDATE_PERIOD_MS)
     {
+        return s_last_budget; // 非更新周期，直接返回上次结果
+    }
+    s_budget_last_tick = now_tick;
+
+    /* ========== 第1层：裁判限制作为长期基准 ========== */
+    float P_ref = (float)Referee_data.Chassis_Power_Limit;
+    
+    if (P_ref <= 0.0f)
+    {
+        s_last_budget = 0.0f;
         return 0.0f;
     }
-
-    cap.cache_energy = Referee_data.Buffer_Energy;
-
-    if (power_limit < POWER_LIMIT_REFEREE_MIN)
+    if (P_ref < POWER_LIMIT_REFEREE_MIN)
     {
-        power_limit = POWER_LIMIT_REFEREE_MIN;
+        P_ref = POWER_LIMIT_REFEREE_MIN;
     }
-
-    if (power_limit > 5.0f)
+    
+    // 长期可持续目标 = 裁判限制 * 安全系数
+    float P_sustain = P_ref * POWER_SAFETY_MARGIN;
+    
+    // 通知超电板当前功率限制
+    if (P_ref > 5.0f)
     {
-        Supercap_SetPower((uint8_t)(power_limit - 5.0f));
+        Supercap_SetPower((uint8_t)(P_ref - 5.0f));
     }
     else
     {
         Supercap_SetPower(0);
     }
+    // 更新缓冲能量给超电通信（饱和赋值防截断）
+    cap.cache_energy = (Referee_data.Buffer_Energy > 255u) ? 255u : (uint8_t)Referee_data.Buffer_Energy;
 
-    /* ========== 第1层防御：缓冲能量闭环保护 ========== */
-    // 核心思想：缓冲能量是裁判系统对"你是否超功率"的直接反馈
-    // 如果缓冲在下降（低于目标值），说明实际功率已超标，必须收紧
+    /* ========== 第2层：超电额外功率 —— 状态量管控 ========== */
+    // 核心原则：放开要慢，收紧要快；超电只负责短时爆发，不负责全局全速
+    {
+        float cap_vol = cap.remain_vol;
+        float cap_vol_drop = s_cap_vol_last - cap_vol; // 正值=电压在下降
+        float buffer_energy = (float)Referee_data.Buffer_Energy;
+        
+        if (cap_vol < CAP_MIN_VOL)
+        {
+            // 保护：电压过低，禁止额外放电
+            s_cap_extra_power = 0.0f;
+        }
+        else if (cap_vol_drop > CAP_VOLT_DROP_THRESH)
+        {
+            // 超电净放电（电压在下降）→ 快速收紧
+            s_cap_extra_power -= CAP_TIGHTEN_RATE;
+        }
+        else if (cap_vol > CAP_ALLOW_VOL && buffer_energy > BUFFER_TARGET)
+        {
+            // 条件好（电压高 + 缓冲充足）→ 慢慢放开
+            s_cap_extra_power += CAP_RELEASE_RATE;
+        }
+        else if (buffer_energy < BUFFER_TARGET - BUFFER_DEADBAND)
+        {
+            // 缓冲能量偏低，即使超电电压够也不能加
+            s_cap_extra_power -= CAP_TIGHTEN_RATE * 0.5f;
+        }
+        // else: 维持当前值不变
+        
+        // 钳位：上限跟随裁判限制按比例浮动
+        float cap_extra_max_now = P_ref * CAP_EXTRA_RATIO;
+        if (s_cap_extra_power < 0.0f) s_cap_extra_power = 0.0f;
+        if (s_cap_extra_power > cap_extra_max_now) s_cap_extra_power = cap_extra_max_now;
+        
+        s_cap_vol_last = cap_vol;
+    }
+
+    /* ========== 第3层：Buffer Energy 慢闭环 ========== */
+    // Buffer 不是瞬时功率，它是"裁判系统的能量存款"
+    // 只允许扣功率或释放之前的扣减，永远不反向加功率
     {
         float buffer_energy = (float)Referee_data.Buffer_Energy;
         
-        // PID控制：让缓冲能量维持在目标值附近
-        // 当buffer < target时，误差为正 → 输出为正 → 扣减功率
-        buffer_derating = PID_Cal(&buffer_energy_pid, buffer_energy, BUFFER_ENERGY_TARGET);
-        
-        // 只允许扣减（正值），不允许通过此通道加功率
-        if (buffer_derating < 0.0f)
+        if (buffer_energy < BUFFER_DANGER)
         {
-            buffer_derating = 0.0f;
+            // 紧急模式：直接拉满扣减
+            s_buffer_derating = BUFFER_DERATING_MAX;
         }
-        
-        // 危险模式：缓冲能量极低时强制大幅降功率
-        if (buffer_energy < BUFFER_ENERGY_DANGER)
+        else if (buffer_energy < BUFFER_TARGET - BUFFER_DEADBAND)
         {
-            buffer_derating = BUFFER_DERATING_MAX;
+            // 偏低：逐步增大扣减（收紧快）
+            s_buffer_derating += BUFFER_TIGHTEN_RATE;
         }
+        else if (buffer_energy > BUFFER_TARGET + BUFFER_DEADBAND)
+        {
+            // 偏高：缓慢释放之前的扣减（放开慢）
+            s_buffer_derating -= BUFFER_RELEASE_RATE;
+        }
+        // else: 在死区内不动作
+        
+        // 钳位
+        if (s_buffer_derating < 0.0f) s_buffer_derating = 0.0f;
+        if (s_buffer_derating > BUFFER_DERATING_MAX) s_buffer_derating = BUFFER_DERATING_MAX;
     }
 
-    /* ========== 第2层防御：实测功率反馈修正 ========== */
-    // 核心思想：用裁判系统/超电测量的实际底盘功率，修正模型预测的系统性偏差
+    /* ========== 第4层：实测功率滤波保护 ========== */
+    // 有5%公差 → 先低通滤波，再加死区，不直接PID追
     {
-        float chassis_power_actual = cap.Chassis_power; // 超电板测量的实际底盘功率
+        float P_meas_raw = cap.Chassis_power;
         
-        // 只在有有效功率读数时启用反馈
-        if (chassis_power_actual > 5.0f)
+        // 一阶低通滤波: filt += alpha * (raw - filt)
+        if (P_meas_raw > 0.0f) // 只在有有效数据时更新
         {
-            // 当实测功率 > 限制功率时，误差为正 → 输出为正 → 扣减
-            feedback_derating = PID_Cal(&power_feedback_pid, chassis_power_actual, power_limit);
-            
-            if (feedback_derating < 0.0f)
-            {
-                feedback_derating = 0.0f;
-            }
+            s_power_measured_filt += POWER_LPF_ALPHA * (P_meas_raw - s_power_measured_filt);
         }
+        
+        // 超出目标量
+        float over_power = s_power_measured_filt - P_sustain;
+        
+        if (over_power > POWER_OVER_THRESHOLD)
+        {
+            // 超功率：增大扣减（快）
+            s_power_derating += POWER_TIGHTEN_RATE;
+        }
+        else if (s_power_measured_filt < P_ref * 0.85f)
+        {
+            // 功率远低于限制：缓慢释放（慢）
+            s_power_derating -= POWER_RELEASE_RATE;
+        }
+        // else: 在合理范围内不动作
+        
+        // 钳位
+        if (s_power_derating < 0.0f) s_power_derating = 0.0f;
+        if (s_power_derating > POWER_DERATING_MAX) s_power_derating = POWER_DERATING_MAX;
     }
 
-    /* ========== 超电额外功率计算 ========== */
-    if (cap.remain_vol > CAP_MIN_VOL)
-    {
-        cap_extra_power = (cap.remain_vol - CAP_MIN_VOL) * POWER_PER_VOLT;
-        if (cap_extra_power > CAP_EXTRA_POWER_MAX)
-        {
-            cap_extra_power = CAP_EXTRA_POWER_MAX;
-        }
-    }
-    else
-    {
-        cap_extra_power = -10.0f;
-    }
-
-    /* ========== 综合计算最终功率限制 ========== */
-    final_limit = power_limit + cap_extra_power;
-    
-    // 第3层防御：安全余量系数（补偿模型的系统性低估）
-    final_limit *= POWER_SAFETY_MARGIN;
-    
-    // 应用第1层和第2层的扣减
-    final_limit -= buffer_derating;
-    final_limit -= feedback_derating;
+    /* ========== 综合计算最终功率预算 ========== */
+    float final_limit = P_sustain
+                      + s_cap_extra_power
+                      - s_buffer_derating
+                      - s_power_derating;
 
     if (final_limit < POWER_LIMIT_MIN)
     {
         final_limit = POWER_LIMIT_MIN;
     }
 
+    s_last_budget = final_limit;
     return final_limit;
 }
 
@@ -918,11 +1004,13 @@ void Chassis_Calculator(float vx,float vy,float vw)
                                      CHASSISMotor_get_data(WHEEL_TURN_BR).speed_rpm, 
                                      Chassis.turn_BR.set_turn_BR_speed);
     // 最大速度限制
-/*     val_limit(&vx, Chassis.speed.max_x);
-    val_limit(&vy, Chassis.speed.max_y);
-    val_limit(&vw, Chassis.speed.max_r); */
-
-    //--确定目标速度的正负
+/*     val_limit(&vx,执行层（接收上板指令 + 解算 + PID + 电机输出 + 功率限制）
+ * @note           接收上板发来的 X_speed/Y_speed/R_speed 和 mode，
+ *                 执行践随/舵轮解算/PID/功率限制/电流输出
+ * @param          none
+ * @retval         none
+ */
+void Chassis_Execute_Update
     Chassis.forward_FL.target_velocity_FL = Chassis.forward_FL.V_FL * Chassis.forward_FL.opposite_direction_FL;
     Chassis.forward_FR.target_velocity_FR = Chassis.forward_FR.V_FR * Chassis.forward_FR.opposite_direction_FR;
     Chassis.forward_BL.target_velocity_BL = Chassis.forward_BL.V_BL * Chassis.forward_BL.opposite_direction_BL;
@@ -1027,7 +1115,7 @@ void Chassis_Tasks(void)
 
     if (Referee_data.Chassis_Power_Limit > 0)
     {
-        float final_limit = Chassis_GetAvailablePowerLimit();
+        float final_limit = PowerBudget_Update();
         if (final_limit > 0.0f)
         {
             Chassis_PowerControl_Total(final_limit);
