@@ -1,7 +1,7 @@
 /*
  * @Date: 2025-10-24 19:37:34
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-03-24 04:14:16
+ * @LastEditTime: 2026-05-07 05:31:25
  * @FilePath: \Season26_Regular_Sentry_Chassis\Core\Src\freertos.c
  */
 /* USER CODE BEGIN Header */
@@ -273,7 +273,7 @@ void Chassis_Task(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    Chassis_Execute_Update();
+    Chassis_Tasks();
     Supercup_SendData();
     osDelay(1);
   }
@@ -381,7 +381,7 @@ void Referee_Task(void *argument)
 
     // 设置哨兵想要兑换的发弹量值为 50
     Sentry_cmd_1.request_increase_ammo_number = 50;
-    
+    Sentry_cmd_1.sentry_posture = Get_Sentry_Posture_From_Aligning(Chassis.is_aligning);
     Decision_Transmission(&Sentry_cmd_1, referee_tx_buffer);
     osDelay(1);
   }

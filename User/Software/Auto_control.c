@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-02 20:26:56
+ * @LastEditTime: 2026-05-07 05:30:58
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Auto_control.c
  */
 
@@ -149,7 +149,12 @@ void MINIPC_to_STM32()
 }
 #endif
 
-
+uint32_t Get_Sentry_Posture_From_Aligning(uint8_t aligning)
+{
+    if (aligning >= 1 && aligning <= 3)
+        return aligning;
+    return 3;
+}
 
 void Decision_Transmission(Sentry_cmd_t *sentry_cmd_info, uint8_t *tx_buffer)
 {

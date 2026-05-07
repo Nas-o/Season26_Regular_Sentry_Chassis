@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-04 12:12:18
+ * @LastEditTime: 2026-05-07 08:22:07
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Chassis.c
  */
 
@@ -1004,13 +1004,11 @@ void Chassis_Calculator(float vx,float vy,float vw)
                                      CHASSISMotor_get_data(WHEEL_TURN_BR).speed_rpm, 
                                      Chassis.turn_BR.set_turn_BR_speed);
     // 最大速度限制
-/*     val_limit(&vx,执行层（接收上板指令 + 解算 + PID + 电机输出 + 功率限制）
- * @note           接收上板发来的 X_speed/Y_speed/R_speed 和 mode，
- *                 执行践随/舵轮解算/PID/功率限制/电流输出
- * @param          none
- * @retval         none
- */
-void Chassis_Execute_Update
+/*     val_limit(&vx, Chassis.speed.max_x);
+    val_limit(&vy, Chassis.speed.max_y);
+    val_limit(&vw, Chassis.speed.max_r); */
+
+    //--确定目标速度的正负
     Chassis.forward_FL.target_velocity_FL = Chassis.forward_FL.V_FL * Chassis.forward_FL.opposite_direction_FL;
     Chassis.forward_FR.target_velocity_FR = Chassis.forward_FR.V_FR * Chassis.forward_FR.opposite_direction_FR;
     Chassis.forward_BL.target_velocity_BL = Chassis.forward_BL.V_BL * Chassis.forward_BL.opposite_direction_BL;

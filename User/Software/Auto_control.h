@@ -241,6 +241,7 @@ void Auto_Control();
 void MINIPC_to_STM32();
 void decodeNAVdata(Navigation_data_t *target, unsigned char buff[], unsigned int len);
 void Decision_Transmission(Sentry_cmd_t *sentry_cmd_info, uint8_t *tx_buffer);
+uint32_t Get_Sentry_Posture_From_Aligning(uint8_t aligning);
 extern MINIPC_data_t fromMINIPC;
 extern STM32_data_t toMINIPC;;
 extern Navigation_data_t Navigation_receive_1;
