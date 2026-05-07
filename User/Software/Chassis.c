@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-07 08:22:07
+ * @LastEditTime: 2026-05-07 08:28:56
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Chassis.c
  */
 
@@ -1003,10 +1003,7 @@ void Chassis_Calculator(float vx,float vy,float vw)
     Chassis.turn_BR.current_steer_BR = PID_Cal(&Chassis.turn_BR.chassis_speed_pid_turn_BR, 
                                      CHASSISMotor_get_data(WHEEL_TURN_BR).speed_rpm, 
                                      Chassis.turn_BR.set_turn_BR_speed);
-    // 最大速度限制
-/*     val_limit(&vx, Chassis.speed.max_x);
-    val_limit(&vy, Chassis.speed.max_y);
-    val_limit(&vw, Chassis.speed.max_r); */
+
 
     //--确定目标速度的正负
     Chassis.forward_FL.target_velocity_FL = Chassis.forward_FL.V_FL * Chassis.forward_FL.opposite_direction_FL;
@@ -1074,20 +1071,20 @@ void Chassis_Tasks(void)
 #if (USE_CHASSIS !=0 )
     float final_vx, final_vy, final_r;
     // 非is_aligning==5时重置对齐完成标志
-    if (Chassis.is_aligning != 5)
+    if (Chassis.region_code != 5)
     {
         Chassis.alignment_done = 0;
     }
 
     // 对齐中且relative_angle在5°以内，标记对齐完成
-    if (Chassis.is_aligning == 5 && !Chassis.alignment_done && fabsf(Chassis.relative_angle) <= 5.0f)
+    if (Chassis.region_code == 5 && !Chassis.alignment_done && fabsf(Chassis.relative_angle) <= 5.0f)
     {
         Chassis.alignment_done = 1;
     }
 
     // 仅在对齐未完成时跟随大yaw
     uint8_t use_gimbal_follow = (Global.Chassis.mode == FLOW_Gimbal) ||
-                                (Global.Chassis.mode == Navigation && Chassis.is_aligning == 5 && !Chassis.alignment_done);
+                                (Global.Chassis.mode == Navigation && Chassis.region_code == 5 && !Chassis.alignment_done);
 
     final_r = R_speed;
 
@@ -1202,6 +1199,7 @@ static void Receive_Saltation_Mode(uint8_t data[8])
     Chassis.is_aligning           = bytes_to_uint8(&data[4]);
     fromMINIPC.mode               = bytes_to_uint8(&data[5]);
     Auto_data.is_scaning          = bytes_to_uint8(&data[6]);
+    Chassis.region_code           = bytes_to_uint8(&data[7]);
 }
 
 static void Receive_Trigger_Mode(uint8_t data[8])

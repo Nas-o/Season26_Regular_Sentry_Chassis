@@ -117,7 +117,6 @@ void Gimbal_Updater()
  */
 void Gimbal_Calculator()
 {
-    uint8_t is_omni_sence = (Chassis.is_aligning != 5 && Gimbal.big_yaw.planning_speed != 0);
     // FLOW_Chassis: 大yaw泄力
     if (Global.Chassis.mode == FLOW_Chassis && Global.Auto.mode != CAR)
     {
@@ -134,13 +133,13 @@ void Gimbal_Calculator()
             // 导航锁定目标：大yaw位置+速度双环跟随小yaw方向
             Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
         }
-        else if (Chassis.is_aligning == 5 && !Chassis.alignment_done)
+        else if (Chassis.region_code == 5 && !Chassis.alignment_done)
         {
             // 颠簸路段未对齐：大yaw位置环锁定方向
             Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now + Gimbal.big_yaw.planning_speed;
             Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
         }
-        else if (Chassis.is_aligning != 5 && Gimbal.big_yaw.planning_speed != 0)
+        else if (Chassis.region_code != 5 && Gimbal.big_yaw.planning_speed != 0)
         {
             Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.planning_speed;
             Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);

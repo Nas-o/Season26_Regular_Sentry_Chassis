@@ -204,6 +204,7 @@ typedef struct
     float chassis_saltation_mode;
     uint8_t is_aligning;
     uint8_t alignment_done;   // 颠簸路段一次性对齐完成标志
+    uint8_t region_code;      //指定区域
     PowerLimiter_t limiter_wheel; // 轮向限制器
     PowerLimiter_t limiter_steer; // 舵向限制器
     
