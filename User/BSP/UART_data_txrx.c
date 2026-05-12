@@ -22,6 +22,9 @@
 #include "referee_system.h"
 #include "motor.h"
 #include "stp_23.h"
+#include "vofa+.h"
+#include "supercup.h"
+#include "Chassis.h"
 
 #include "Global_status.h"
 #include "Auto_control.h"
@@ -185,7 +188,8 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     {
         STP23_ProcessByte(UART10_data.rev_data[i]);
     } */
-
+   UploadData_vofa(cap.Chassis_power,Chassis.forward_FL.wheel_current_FL,CHASSISMotor_get_data(WHEEL_MOVE_FL).round_speed * RPM_TO_RAD_S,0);
+  
     // 重新启动DMA接收
     HAL_UARTEx_ReceiveToIdle_DMA(huart, UART10_data.rev_data, UART_BUFFER_SIZE);
     __HAL_DMA_DISABLE_IT(huart->hdmarx, DMA_IT_HT); // 关闭半传输中断

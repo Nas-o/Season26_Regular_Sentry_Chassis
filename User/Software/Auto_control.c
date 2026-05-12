@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-07 05:30:58
+ * @LastEditTime: 2026-05-09 15:28:52
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Auto_control.c
  */
 
@@ -126,7 +126,7 @@ void STM32_to_MINIPC()
 {
     toMINIPC.header[0] = 'S';
     toMINIPC.header[1] = 'P';
-    toMINIPC.mode = MODE_AUTO_AIM;
+    toMINIPC.mode = MODE_SMALL_BUFF;
     toMINIPC.yaw = IMU_data.AHRS.yaw;
     toMINIPC.pitch = IMU_data.AHRS.pitch;
     toMINIPC.yaw_vel = IMU_data.gyro[2];

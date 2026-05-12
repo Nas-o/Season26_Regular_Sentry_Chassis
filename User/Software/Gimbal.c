@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-05 19:41:06
+ * @LastEditTime: 2026-05-12 13:46:17
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Gimbal.c
  */
 /*
@@ -45,8 +45,8 @@ void Gimbal_Init()
 {
     DMMotor_Init(DM_4310, BIGYAWMotor);
 
-    PID_Set(&Gimbal.big_yaw.big_yaw_speed_pid, 0.021f, 0.0f, 0.0f, 0.0f, 7.0, 100);
-    PID_Set(&Gimbal.big_yaw.big_yaw_location_pid, 6.0f, 0.0f, 1.0f, 0.0f, 500.0, 100);
+    PID_Set(&Gimbal.big_yaw.big_yaw_speed_pid, 0.024f, 0.0f, 0.0f, 0.0f, 7.0, 100);
+    PID_Set(&Gimbal.big_yaw.big_yaw_location_pid, 8.0f, 0.0f, 1.0f, 0.0f, 500.0, 100);
 
     DMMotor_SetZero(BIG_YAW_ZERO, BIGYAWMotor);
 }
@@ -94,7 +94,7 @@ void Gimbal_Updater()
         float delta_encoder   = target_encoder - current_encoder;
         Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now + delta_encoder;
     }
-    else if (Global.Chassis.mode == Navigation)
+    else if (Global.Chassis.mode == Navigation && Auto_data.is_scaning == 1)
     {
         // Navigation + 扫描：目标跟随当前位置
         Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now;
@@ -139,15 +139,10 @@ void Gimbal_Calculator()
             Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now + Gimbal.big_yaw.planning_speed;
             Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
         }
-        else if (Chassis.region_code != 5 && Gimbal.big_yaw.planning_speed != 0)
-        {
-            Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.planning_speed;
-            Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
-        }
         else
         {
             // 正常导航 或 对齐已完成：速度环扫描
-            Gimbal.big_yaw.big_yaw_speed_set = 160.0f;
+            Gimbal.big_yaw.big_yaw_speed_set = 80.0f;
         }
         Gimbal.big_yaw.current = PID_Cal(&Gimbal.big_yaw.big_yaw_speed_pid, Gimbal.big_yaw.big_yaw_speed_now, Gimbal.big_yaw.big_yaw_speed_set);
         return;
@@ -241,8 +236,5 @@ void Pack_RelativeAngle(uint8_t data[8])
 
     Chassis.relative_angle = DMMotor_GetData(BIGYAWMotor).motor_data.para.angle_cnt - BIG_YAW_ZERO;
     float_to_bytes(Chassis.relative_angle, &data[0]);
-    data[4] = seq++;
-    data[5] = 0xA5u;
-    data[6] = 0x5Au;
-    data[7] = 0;
+    float_to_bytes(Gimbal.big_yaw.big_yaw_speed_now, &data[4]);
 }
