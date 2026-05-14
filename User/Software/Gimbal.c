@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-12 13:46:17
+ * @LastEditTime: 2026-05-14 05:28:48
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Gimbal.c
  */
 /*
@@ -46,7 +46,7 @@ void Gimbal_Init()
     DMMotor_Init(DM_4310, BIGYAWMotor);
 
     PID_Set(&Gimbal.big_yaw.big_yaw_speed_pid, 0.024f, 0.0f, 0.0f, 0.0f, 7.0, 100);
-    PID_Set(&Gimbal.big_yaw.big_yaw_location_pid, 8.0f, 0.0f, 1.0f, 0.0f, 500.0, 100);
+    PID_Set(&Gimbal.big_yaw.big_yaw_location_pid, 6.0f, 0.0f, 1.0f, 0.0f, 500.0, 100);
 
     DMMotor_SetZero(BIG_YAW_ZERO, BIGYAWMotor);
 }
@@ -86,7 +86,7 @@ void Gimbal_Updater()
         // 泄力 / FLOW_Chassis：目标跟随当前位置
         Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now;
     }
-    else if (Global.Chassis.mode == Navigation && Auto_data.is_scaning == 0)
+    else if ((Global.Chassis.mode == Navigation && Auto_data.is_scaning == 0)|| (fromMINIPC.mode != CTRL_NO_CONTROL))
     {
         // 自瞄锁定：上板发的是编码器坐标系目标，转成IMU世界角
         float current_encoder = Chassis.relative_angle;

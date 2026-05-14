@@ -1,7 +1,7 @@
 /*
  * @Date: 2025-08-31 21:36:57
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-03-24 04:16:18
+ * @LastEditTime: 2026-05-15 03:17:00
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Auto_control.h
  */
 #ifndef __AUTO_CONTROL_H__
