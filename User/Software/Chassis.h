@@ -211,6 +211,7 @@ typedef struct
 }Chassis_t;
 extern Chassis_t Chassis;
 extern float flag_lock;
+extern float R_speed;
 /*外部调用*/
 void Chassis_Init();
 void Chassis_Tasks();

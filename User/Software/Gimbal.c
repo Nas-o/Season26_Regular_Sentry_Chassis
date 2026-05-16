@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-14 05:28:48
+ * @LastEditTime: 2026-05-16 10:46:51
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Gimbal.c
  */
 /*
@@ -151,6 +151,11 @@ void Gimbal_Calculator()
     // 其他模式：位置+速度双环PID
     Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
     Gimbal.big_yaw.current = PID_Cal(&Gimbal.big_yaw.big_yaw_speed_pid, Gimbal.big_yaw.big_yaw_speed_now, Gimbal.big_yaw.big_yaw_speed_set);
+
+    // 底盘角速度前馈：抵消小陀螺对大Yaw的扰动力矩
+    // R_speed 单位 rad/s，Kff 需实际调试（初始建议 0.1~0.5）
+    #define BIG_YAW_FEEDFORWARD_KFF  0.2f
+    Gimbal.big_yaw.current += BIG_YAW_FEEDFORWARD_KFF * R_speed;
 }
 
 
