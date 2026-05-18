@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-16 10:46:51
+ * @LastEditTime: 2026-05-19 05:13:22
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Gimbal.c
  */
 /*
@@ -81,12 +81,12 @@ void Gimbal_Updater()
     last_chassis_mode = Global.Chassis.mode;
 
     /*------目标量更新------*/
-    if (Global.Control.mode == LOCK || Global.Chassis.mode == FLOW_Chassis)
+    if (Global.Control.mode == LOCK || Global.Chassis.mode == FLOW_Chassis )
     {
         // 泄力 / FLOW_Chassis：目标跟随当前位置
         Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now;
     }
-    else if ((Global.Chassis.mode == Navigation && Auto_data.is_scaning == 0)|| (fromMINIPC.mode != CTRL_NO_CONTROL))
+    else if (Global.Chassis.mode == Navigation && Auto_data.is_scaning == 0)
     {
         // 自瞄锁定：上板发的是编码器坐标系目标，转成IMU世界角
         float current_encoder = Chassis.relative_angle;
@@ -142,7 +142,7 @@ void Gimbal_Calculator()
         else
         {
             // 正常导航 或 对齐已完成：速度环扫描
-            Gimbal.big_yaw.big_yaw_speed_set = 80.0f;
+            Gimbal.big_yaw.big_yaw_speed_set = 120.0f;
         }
         Gimbal.big_yaw.current = PID_Cal(&Gimbal.big_yaw.big_yaw_speed_pid, Gimbal.big_yaw.big_yaw_speed_now, Gimbal.big_yaw.big_yaw_speed_set);
         return;
@@ -153,9 +153,8 @@ void Gimbal_Calculator()
     Gimbal.big_yaw.current = PID_Cal(&Gimbal.big_yaw.big_yaw_speed_pid, Gimbal.big_yaw.big_yaw_speed_now, Gimbal.big_yaw.big_yaw_speed_set);
 
     // 底盘角速度前馈：抵消小陀螺对大Yaw的扰动力矩
-    // R_speed 单位 rad/s，Kff 需实际调试（初始建议 0.1~0.5）
-    #define BIG_YAW_FEEDFORWARD_KFF  0.2f
-    Gimbal.big_yaw.current += BIG_YAW_FEEDFORWARD_KFF * R_speed;
+    // #define BIG_YAW_FEEDFORWARD_KFF  0.2f
+    // Gimbal.big_yaw.current -= BIG_YAW_FEEDFORWARD_KFF * R_speed;
 }
 
 

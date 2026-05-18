@@ -303,7 +303,7 @@ void Shoot_Init(void)
     Shoot.heat_model.effective_cooling = 0.0f;
     Shoot.heat_model.heat_limit = 0.0f;
     Shoot.heat_model.k_heat = 1.0f;
-    Shoot.heat_model.heat_control_enabled = 0;
+    Shoot.heat_model.heat_control_enabled = 1;
 
     Shoot.trigger_ctrl_mode = TRIGGER_CTRL_SPEED;
     Shoot.stop_fire_state = STOP_FIRE_DISABLE;
