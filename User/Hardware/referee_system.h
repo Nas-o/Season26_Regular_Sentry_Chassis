@@ -34,8 +34,13 @@ typedef struct // 自定义结构体，需在函数中赋值，然后在 FREERTOS 里调用  后续可根
     uint16_t cooling_buff;              //射击热量冷却增益具体值（来自 ext_buff_t 0x0204，值为 x 表示冷却增加 x/s）
     uint8_t  sentry_posture;            //哨兵当前姿态（来自 ext_sentry_info_t 0x020D bit12-13：1进攻 2防御 3移动）
     uint8_t  energy_rune_activatable;   //己方能量机关是否可激活（bit14：1为可激活）
-    
 
+    /* 自主决策相关字段 */
+    uint16_t team_remaining_exchangeable_ammo; //队伍17mm允许发弹量的剩余可兑换数（sentry_info_2 bit1-11）
+    uint16_t remaining_gold_coin;       //剩余金币数量（来自0x0208）
+    uint8_t  can_pay_respawn;           //哨兵当前是否可以兑换立即复活（sentry_info bit20）
+    uint16_t respawn_gold_cost;         //哨兵兑换立即复活需要花费的金币数（sentry_info bit21-30）
+    uint32_t event_data;                //场地事件数据（来自0x0101）
 
     //导航相关数据
 	
@@ -658,6 +663,8 @@ extern ext_robot_status_t robot_status;
 extern ext_game_status_t game_status;
 extern ext_game_robot_HP_t game_robot_HP;
 extern ext_rfid_status_t rfid_status;
+extern ext_event_data_t event_data;
+extern ext_sentry_info_t sentry_data;
 
 void Refree_system_init(void);
 void Referee_unpack_fifo_data(fifo_s_t* p_fifo,unpack_data_t* p_obj);

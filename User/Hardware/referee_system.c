@@ -45,6 +45,7 @@ ext_rfid_status_t rfid_status;                   // 机器人RFID状态(检查点位状态)
 /*----------- 增益与哨兵决策数据 -----------*/
 ext_buff_t robot_buff;                             // 机器人增益数据(3Hz，含冷却增益)
 ext_sentry_info_t sentry_data;                     // 哨兵决策数据(3Hz，含姿态/能量机关)
+ext_event_data_t event_data;                       // 场地事件数据(事件改变后发送)
 /*----------- 交互数据 -----------*/
 ext_robot_interaction_data_t robot_interaction_data; // 机器人交互数据(自定义通信内容)
 ext_custom_info_t exchange_data;                     // 自定义UI显示数据(选手端特定位置字符显示)
@@ -76,6 +77,7 @@ static void referee_struct_init(void)
     // 增益与哨兵决策数据
     memset(&robot_buff, 0, sizeof(ext_buff_t));
     memset(&sentry_data, 0, sizeof(ext_sentry_info_t));
+    memset(&event_data, 0, sizeof(ext_event_data_t));
     // 机器人交互数据
     memset(&robot_interaction_data, 0, sizeof(ext_robot_interaction_data_t));
     // 选手端特定位置显示字符
@@ -102,6 +104,13 @@ static void required_Data() //后续可根据需要自行添加
         Referee_data.cooling_buff = robot_buff.cooling_buff;
         Referee_data.sentry_posture = (uint8_t)((sentry_data.sentry_info_2 >> 12) & 0x03);
         Referee_data.energy_rune_activatable = (uint8_t)((sentry_data.sentry_info_2 >> 14) & 0x01);
+
+        /* 自主决策相关字段 */
+        Referee_data.team_remaining_exchangeable_ammo = (uint16_t)((sentry_data.sentry_info_2 >> 1) & 0x7FF);
+        Referee_data.remaining_gold_coin = projectile_allowance.remaining_gold_coin;
+        Referee_data.can_pay_respawn = (uint8_t)((sentry_data.sentry_info >> 20) & 0x01);
+        Referee_data.respawn_gold_cost = (uint16_t)((sentry_data.sentry_info >> 21) & 0x3FF);
+        Referee_data.event_data = event_data.event_data;
 }
 static void referee_data_solve(uint8_t *frame)
 {
@@ -134,7 +143,7 @@ static void referee_data_solve(uint8_t *frame)
         break;
         case FIELD_EVENTS_CMD_ID:
         {
-            //memcpy(&event_data, frame + index, sizeof(ext_event_data_t));
+            memcpy(&event_data, frame + index, sizeof(ext_event_data_t));
         }
         break;
         case REFEREE_WARNING_CMD_ID:

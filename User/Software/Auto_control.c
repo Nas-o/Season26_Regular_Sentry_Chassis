@@ -2,7 +2,7 @@
  * @Author: Nas(1319621819@qq.com)
  * @Date: 2025-11-03 00:07:24
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-09 15:28:52
+ * @LastEditTime: 2026-05-21 03:19:28
  * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Auto_control.c
  */
 
@@ -273,10 +273,10 @@ typedef struct {
 } GimbalTxEntry_t;
 
 static const GimbalTxEntry_t GimbalTxTable[] = {
-    { CAN_ID_GIMBAL_RELATIVE_ANGLE, Pack_RelativeAngle, 1, 0 },
-    { CAN_ID_REFEREE_DATA_1,        Pack_RefereeData1, 10, 2 },
-    { CAN_ID_REFEREE_DATA_2,        Pack_RefereeData2, 10, 5 },
-    { CAN_ID_REFEREE_DATA_3,        Pack_RefereeData3, 10, 8 },
+    { CAN_ID_GIMBAL_RELATIVE_ANGLE, Pack_RelativeAngle,  1,  0 },
+    { CAN_ID_REFEREE_DATA_1,        Pack_RefereeData1,  20,  2 },  // 50Hz, phase=2ms
+    { CAN_ID_REFEREE_DATA_2,        Pack_RefereeData2,  20,  9 },  // 50Hz, phase=9ms
+    { CAN_ID_REFEREE_DATA_3,        Pack_RefereeData3,  20, 16 },  // 50Hz, phase=16ms
 };
 
 void Gimbal_CAN_SendAll(void)
@@ -294,5 +294,5 @@ void Gimbal_CAN_SendAll(void)
         Fdcanx_SendData(&hfdcan2, GimbalTxTable[i].id, buf, 8);
     }
 
-    if (++tick >= 10) tick = 0;
+    if (++tick >= 20) tick = 0;
 }
