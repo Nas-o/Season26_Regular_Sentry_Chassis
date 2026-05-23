@@ -2,6 +2,7 @@
 #define __DM_MOTOR_DRV_H__
 #include "main.h"
 #include "fdcan.h"
+#include "User_math.h"
 
 #define MIT_MODE 			0x000
 #define POS_MODE			0x100
@@ -12,11 +13,11 @@
 #define KP_MAX 500.0f
 #define KD_MIN 0.0f
 #define KD_MAX 5.0f
-#define P_MAX 12.56637061435917f
+#define P_MAX 12.56637f
 #define V_MAX 30.0f
 #define T_MAX 10.0f
 
-#define POS_TO_ANGLE  (180.0 / 3.14159265358979323846)
+#define POS_TO_ANGLE  57.295779513082f
 
 typedef enum
 {
@@ -216,4 +217,3 @@ void write_motor_data(uint16_t id, uint8_t rid, uint8_t d0, uint8_t d1, uint8_t 
 void save_motor_data(uint16_t id, uint8_t rid);
 
 #endif /* __DM_MOTOR_DRV_H__ */
-

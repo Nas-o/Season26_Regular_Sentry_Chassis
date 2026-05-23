@@ -171,5 +171,3 @@ void receive_motor_data(DM_motor_t *motor, uint8_t *data)
 //  		case 0x00: dm_motor_fbdata(&motor[Motor1], rx_data); receive_motor_data(&motor[Motor1], rx_data); break;
 // 	}
 // }
-
-
