@@ -94,7 +94,7 @@
   */
 
 
-#include "arm_math.h"
+#include "arm_math.hpp"
 #include "arm_const_structs.h"
 
 #define TEST_LENGTH_SAMPLES 2048

@@ -28,7 +28,7 @@
  *
  * -------------------------------------------------------------------- */
 
-#include "arm_math.h"
+#include "arm_math.hpp"
 #include "arm_common_tables.h"
 #include "arm_nnfunctions.h"
 

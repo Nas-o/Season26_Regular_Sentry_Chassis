@@ -25,7 +25,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "arm_math.h"
+#include "arm_math.hpp"
 #include "arm_common_tables.h"
 #include "arm_const_structs.h"
 
