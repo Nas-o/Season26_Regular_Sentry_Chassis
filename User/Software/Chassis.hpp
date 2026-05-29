@@ -2,7 +2,7 @@
  * @file    Chassis.hpp
  * @brief   舵轮底盘控制器 (Swerve Drive Controller)
  * @author  Nas (refactored 2026-05)
- * @note    使用数组+循环代替FL/FR/BL/BR四份重复代码
+ * @note    使用 class 封装底盘状态与控制逻辑
  */
 #ifndef __CHASSIS_H__
 #define __CHASSIS_H__
@@ -31,6 +31,7 @@ uint8_t Chassis_GetAligning(void);
 #include "ramp_generator.hpp"
 #include "motor.hpp"
 #include "CAN_receive_send.hpp"
+#include "PowerControl.hpp"
 
 /* 轮位索引 */
 enum WheelPos : uint8_t { FL = 0, FR, BL, BR, WHEEL_NUM = 4 };
@@ -41,10 +42,10 @@ enum WheelPos : uint8_t { FL = 0, FR, BL, BR, WHEEL_NUM = 4 };
 /* ---- 驱动电机 (M3508) ---- */
 struct DriveUnit {
     pid_t   pid{};
-    float   target_velocity  = 0;    // 目标线速度 m/s
+    float   target_velocity   = 0;    // 目标线速度 m/s
     float   current_velocity  = 0;    // 当前线速度 m/s
-    float   direction   = 1.0f; // 就近换向乘数 (+1/-1)
-    int16_t current     = 0;    // 输出电流
+    float   direction         = 1.0f; // 就近换向乘数 (+1/-1)
+    int16_t current           = 0;    // 输出电流
 };
 
 /* ---- 舵向电机 (GM6020) ---- */
@@ -66,19 +67,12 @@ struct Wheel {
     SteerUnit steer;
 };
 
-/* ---- 功率限制器 ---- */
-struct PowerLimiter {
-    float k0 = 0, k1 = 0, k2 = 0, k3 = 0;
-    float limit_power   = 0;    // 当前生效的功率上限
-    float predict_power = 0;    // 预测功率
-    float scaling       = 1.0f; // 缩放系数 (0~1)
-};
-
 /* ==================================================================
- * 底盘数据结构 (公开状态, 供外部模块读写)
+ * Chassis — 舵轮底盘控制器类
  * ================================================================== */
-struct ChassisData {
-    /* --- 公开状态 --- */
+class Chassis {
+public:
+    /* --- 公开状态 (供外部模块读写) --- */
     float    relative_angle = 0;    // 底盘-云台相对角
     float    heading_target = 0;    // 底盘航向目标
     uint8_t  is_aligning    = 0;
@@ -87,22 +81,44 @@ struct ChassisData {
 
     /* --- 轮组数据 --- */
     std::array<Wheel, WHEEL_NUM> wheel{};
-    PowerLimiter lim_wheel{};
-    PowerLimiter lim_steer{};
 
-    /* --- 斜坡规划器  --- */
+    /* --- 斜坡规划器 --- */
     RampGenerator ramp_vx{}, ramp_vy{}, ramp_vw{};
 
-    /* 速度输入 (由CAN接收或遥控器直接设置) */
+    /* --- 速度输入 (由CAN接收或遥控器设置) --- */
     float vx_ = 0, vy_ = 0, vr_ = 0;
+
+    /* 公开方法 */
+    void Init();
+    void Tasks();
+
+    void SetX(float x) { vx_ = x; }
+    void SetY(float y) { vy_ = y; }
+    void SetR(float r);
+
+private:
+    /* 内部PID */
+    pid_t follow_pid_{};
+    pid_t heading_pid_{};
+    pid_t power_pid_{};
+
+    /* 随机运动状态 */
+    struct { int interval = 250; int small_cnt = 0; int valve = 0; } random_state_{};
+
+    /* 内部方法 */
+    void InitMotor();
+    void Update();
+    void RudderCalculation(float x, float y, float w);
+    void NearbyTransposition();
+    float FollowUpdate();
+    float HeadingAlign();
+    void Calculator(float vx, float vy, float vw);
+    void PowerTotal(float total_max);
+    void Controller();
 };
 
-extern ChassisData chassis;
-
-/* ---- 兼容旧接口 ---- */
-void Chassis_SetX(float x);
-void Chassis_SetY(float y);
-void Chassis_SetR(float r);
+extern Chassis chassis;
 
 #endif /* __cplusplus */
 #endif /* __CHASSIS_H__ */
+

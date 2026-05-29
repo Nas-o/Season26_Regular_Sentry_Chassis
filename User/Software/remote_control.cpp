@@ -229,8 +229,8 @@ void RC_Controller()
         Global.Chassis.mode = SPIN_N;
     else
         Global.Chassis.mode = FLOW_Chassis;
-    Chassis_SetX(RC_data.rc.ch[0] / 40.0f);
-    Chassis_SetY(RC_data.rc.ch[1] / 40.0f);
+    chassis.SetX(RC_data.rc.ch[0] / 40.0f);
+    chassis.SetY(RC_data.rc.ch[1] / 40.0f);
     /*ÔÆÌ¨¿ØÖÆ*/
     Gimbal_SetPitchAngle(Global.Gimbal.input.pitch + RC_data.rc.ch[3] / 2000.0f);
     Gimbal_SetYawAngle(Global.Gimbal.input.yaw - RC_data.rc.ch[2] / 2000.0f);

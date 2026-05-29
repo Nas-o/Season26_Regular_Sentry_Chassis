@@ -43,8 +43,12 @@ struct AxisCtrl {
     float current    = 0;       // 输出电流/力矩
 };
 
-/* 云台控制器 */
-struct GimbalCtrl {
+/* ==================================================================
+ * Gimbal — 云台控制器类
+ * ================================================================== */
+class Gimbal {
+public:
+    /* --- 公开状态 --- */
     AxisCtrl pitch;
     AxisCtrl small_yaw;
 
@@ -64,9 +68,28 @@ struct GimbalCtrl {
 
     RampGenerator pitch_ramp{};
     RampGenerator yaw_ramp{};
+
+    /* 公开方法 */
+    void Init();
+    void Tasks();
+
+    static void SetPitch(float angle);
+    static void SetYaw(float angle);
+
+private:
+    /* 内部状态 */
+    int   last_mode_      = 0;
+    float yaw_offset_     = 0.0f;
+    int   last_ctrl_mode_ = 0;
+
+    /* 内部方法 */
+    void InitMotor();
+    void Update();
+    void Calculator();
+    void Controller();
 };
 
-extern GimbalCtrl gimbal;
+extern Gimbal gimbal;
 
 #endif /* __cplusplus */
 #endif /* __GIMBAL_H__ */

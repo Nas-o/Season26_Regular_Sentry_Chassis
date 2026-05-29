@@ -38,7 +38,7 @@ enum pitch_lock_e
 
 enum yaw_lock_e
 {
-    Yay_move,
+    Yaw_move,
     Yaw_lock,
 };
 
