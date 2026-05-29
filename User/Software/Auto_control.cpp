@@ -10,6 +10,7 @@
 #include "Global_status.hpp"
 #include "Gimbal.hpp"
 #include "Chassis.hpp"
+#include "BoardLink.hpp"
 
 #include "IMU_updata.hpp"
 #include "dm_imu.hpp"

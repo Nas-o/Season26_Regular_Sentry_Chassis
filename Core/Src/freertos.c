@@ -381,7 +381,7 @@ void Referee_Task(void *argument)
     // if(Referee_data.rest_time < 100 && Referee_data.projectile_allowance_17mm
     // 设置哨兵想要兑换的发弹量值为 100
     /* Sentry_cmd_1.request_increase_ammo_number = 100; */
-    Sentry_cmd_1.sentry_posture = Get_Sentry_Posture_From_Aligning(Chassis.is_aligning);
+    Sentry_cmd_1.sentry_posture = Get_Sentry_Posture_From_Aligning(Chassis_GetAligning());
     // Sentry_cmd_1.activate_energy_mechanism = 1;
     Decision_Transmission(&Sentry_cmd_1, referee_tx_buffer);
     osDelay(1);

@@ -188,7 +188,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     {
         STP23_ProcessByte(UART10_data.rev_data[i]);
     } */
-   UploadData_vofa(cap.Chassis_power,Chassis.forward_FL.wheel_current_FL,CHASSISMotor_get_data(WHEEL_MOVE_FL).round_speed * RPM_TO_RAD_S,0);
+   UploadData_vofa(cap.Chassis_power, 0, 0, 0);
   
     // 重新启动DMA接收
     HAL_UARTEx_ReceiveToIdle_DMA(huart, UART10_data.rev_data, UART_BUFFER_SIZE);

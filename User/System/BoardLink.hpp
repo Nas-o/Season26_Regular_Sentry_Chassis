@@ -18,6 +18,7 @@ typedef enum
 void BoardLink_Init(void);
 void BoardLink_TxStep(void);
 uint8_t BoardLink_RxDispatch(FDCAN_HandleTypeDef *hfdcan, uint16_t id, uint8_t data[8]);
+void Pack_RelativeAngle(uint8_t data[8]);
 
 #ifdef __cplusplus
 }

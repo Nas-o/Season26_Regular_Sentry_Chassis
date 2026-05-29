@@ -1,221 +1,201 @@
-/*
- * @Author: Nas(1319621819@qq.com)
- * @Date: 2025-11-03 00:07:24
- * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-19 05:13:22
- * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Gimbal.c
+/**
+ * @file    Gimbal.cpp
+ * @brief   云台控制器实现
+ * @author  Nas (refactored 2026-05)
  */
-/*
-  ****************************(C) COPYRIGHT 2026 ADAM****************************
-  * @file       gimbal.c/h
-  * @brief      云台控制器
-  * @note       包括初始化，数据更新、控制量计算与直接控制量设置
-  * @history
-  *  Version    Date            Author          Modification
-  *  V1.0.0   2025.10.31       Wang Zihao       1.重新构建云台代码结构
-  @verbatim
-  ==============================================================================
-
-  ==============================================================================
-  @endverbatim
-  ****************************(C) COPYRIGHT 2026 ADAM****************************
-*/
+#include <cmath>
 #include "Gimbal.hpp"
 #include "Chassis.hpp"
 #include "Global_status.hpp"
 #include "Auto_control.hpp"
-
 #include "User_math.hpp"
 #include "remote_control.hpp"
 #include "IMU_updata.hpp"
 #include "dm_imu.hpp"
-#include "motor.hpp"
-Gimbal_t Gimbal;
 
+GimbalCtrl gimbal;
 
-
-/*-------------------- Init --------------------*/
+/* -------------------- Init -------------------- */
 
 /**
- * @brief          初始化
- * @param          none
- * @retval         none
+ * @brief  初始化云台电机及PID参数
+ *         DM4310 大Yaw: 位置+速度双环
  */
-void Gimbal_Init()
+static void Gimbal_InitMotor()
 {
+    /* 注册 大Yaw 电机 */
     DMMotor_Init(DM_4310, BIGYAWMotor);
 
-    PID_Set(&Gimbal.big_yaw.big_yaw_speed_pid, 0.024f, 0.0f, 0.0f, 0.0f, 7.0, 100);
-    PID_Set(&Gimbal.big_yaw.big_yaw_location_pid, 6.0f, 0.0f, 1.0f, 0.0f, 500.0, 100);
+    /* Yaw 速度环 PID */
+    PID_Set(&gimbal.yaw.spd_pid,
+            0.024f, 0.0f, 0.0f, 0.0f,
+            7.0f, 100);
 
+    /* Yaw 位置环 PID */
+    PID_Set(&gimbal.yaw.pos_pid,
+            6.0f, 0.0f, 1.0f, 0.0f,
+            500.0f, 100);
+
+    /* 设置大Yaw编码器零点 */
     DMMotor_SetZero(BIG_YAW_ZERO, BIGYAWMotor);
 }
 
-
-
-/*-------------------- Update --------------------*/
+/* -------------------- Update -------------------- */
 
 /**
- * @brief          控制量更新（包括状态量和目标量）
- * @param          none
- * @retval         none
+ * @brief  更新云台状态量与目标量
+ *         - 状态量: IMU角速度投影到yaw轴 + 累计角度
+ *         - 目标量: 根据当前模式决定yaw目标
  */
-void Gimbal_Updater()
+static void Gimbal_Update()
 {
-    static int last_chassis_mode = FLOW_Chassis;
+    static int last_mode = FLOW_Chassis;
     static float yaw_offset = 0.0f;
-    static int last_Global_Control_mode = 0;
+    static int last_ctrl_mode = 0;
 
-    /*------状态量更新------*/
-    Gimbal.big_yaw.big_yaw_speed_now = (cos(degree2rad(imu.pitch)) * rad2degree(imu.gyro[2]) - sin(degree2rad(imu.pitch)) * rad2degree(imu.gyro[0]));
-    Gimbal.big_yaw.big_yaw_location_now = imu.yaw_cnt;
+    /* ---- 状态量更新 ---- */
 
-    /*------模式切换处理------*/
-    uint8_t mode_changed    = (last_chassis_mode != (int)Global.Chassis.mode);
-    uint8_t leaving_disable = (last_Global_Control_mode == LOCK && Global.Control.mode != LOCK);
+    /*
+     * Yaw角速度: 将IMU的陀螺仪数据投影到yaw轴
+     * 公式: yaw_rate = cos(pitch)*gyro_z - sin(pitch)*gyro_x
+     * 当pitch倾斜时, gyro_z不再纯粹是yaw转速, 需要补偿
+     */
+    float cos_pitch = cosf(degree2rad(imu.pitch));
+    float sin_pitch = sinf(degree2rad(imu.pitch));
+    gimbal.yaw.spd_now = cos_pitch * rad2degree(imu.gyro[2])
+                       - sin_pitch * rad2degree(imu.gyro[0]);
+
+    /* Yaw累计角度 (来自IMU融合算法) */
+    gimbal.yaw.pos_now = imu.yaw_cnt;
+
+    /* ---- 模式切换检测 ---- */
+    uint8_t mode_changed    = (last_mode != (int)Global.Chassis.mode);
+    uint8_t leaving_disable = (last_ctrl_mode == LOCK && Global.Control.mode != LOCK);
+
+    /* 切换模式时重新同步yaw偏移量, 避免目标角跳变 */
     if (mode_changed || leaving_disable)
     {
-        yaw_offset = Gimbal.big_yaw.big_yaw_location_now - Global.Gimbal.input.yaw;
+        yaw_offset = gimbal.yaw.pos_now - Global.Gimbal.input.yaw;
     }
-    last_Global_Control_mode = Global.Control.mode;
-    last_chassis_mode = Global.Chassis.mode;
+    last_ctrl_mode = Global.Control.mode;
+    last_mode = Global.Chassis.mode;
 
-    /*------目标量更新------*/
-    if (Global.Control.mode == LOCK || Global.Chassis.mode == FLOW_Chassis )
+    /* ---- 目标量计算 ---- */
+
+    /* 锁定模式 或 底盘独立模式: 目标 = 当前位置 (维持不动) */
+    if (Global.Control.mode == LOCK || Global.Chassis.mode == FLOW_Chassis)
     {
-        // 泄力 / FLOW_Chassis：目标跟随当前位置
-        Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now;
+        gimbal.yaw.pos_set = gimbal.yaw.pos_now;
     }
+    /* 导航模式 (非扫描): 根据底盘-云台相对角差值跟踪目标 */
     else if (Global.Chassis.mode == Navigation && Auto_data.is_scaning == 0)
     {
-        // 自瞄锁定：上板发的是编码器坐标系目标，转成IMU世界角
-        float current_encoder = Chassis.relative_angle;
-        float target_encoder  = Global.Gimbal.input.yaw;
-        float delta_encoder   = target_encoder - current_encoder;
-        Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now + delta_encoder;
+        float current_relative = chassis.relative_angle;
+        float target_yaw = Global.Gimbal.input.yaw;
+        gimbal.yaw.pos_set = gimbal.yaw.pos_now + (target_yaw - current_relative);
     }
+    /* 导航模式 (扫描中): 保持当前朝向, 由扫描逻辑接管 */
     else if (Global.Chassis.mode == Navigation && Auto_data.is_scaning == 1)
     {
-        // Navigation + 扫描：目标跟随当前位置
-        Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now;
+        gimbal.yaw.pos_set = gimbal.yaw.pos_now;
     }
+    /* 默认: 遥控器/自瞄输入 + 偏移补偿 */
     else
     {
-        // 其他模式（FLOW_Gimbal, SPIN等）：位置控制
-        Gimbal.big_yaw.big_yaw_location_set = Global.Gimbal.input.yaw + yaw_offset;
+        gimbal.yaw.pos_set = Global.Gimbal.input.yaw + yaw_offset;
     }
 }
 
-
-/*-------------------- Calculate --------------------*/
+/* -------------------- Calculate -------------------- */
 
 /**
- * @brief          控制量解算.
- * 
- * @param          none
- * @retval         none
+ * @brief  云台PID计算 — 根据模式选择不同的控制策略
+ *         - FLOW_Chassis: 泄力 (不输出力矩)
+ *         - Navigation:   按扫描/对齐/跟踪分支控制
+ *         - 默认:         位置+速度双环
  */
-void Gimbal_Calculator()
+static void Gimbal_Calculator()
 {
-    // FLOW_Chassis: 大yaw泄力
+    /* ---- FLOW_Chassis模式: 云台泄力, 不输出力矩 ---- */
     if (Global.Chassis.mode == FLOW_Chassis && Global.Auto.mode != CAR)
     {
-        Gimbal.big_yaw.big_yaw_speed_set = 0.0f;
-        Gimbal.big_yaw.current = 0.0f;
+        gimbal.yaw.spd_set = 0.0f;
+        gimbal.yaw.current = 0.0f;
         return;
     }
 
-    // Navigation: 大yaw跟随小yaw / 扫描 / 颠簸路段锁定方向
+    /* ---- Navigation 导航模式 ---- */
     if (Global.Chassis.mode == Navigation)
     {
+        /* 非扫描状态: 位置环跟踪目标角度 */
         if (Auto_data.is_scaning == 0)
         {
-            // 导航锁定目标：大yaw位置+速度双环跟随小yaw方向
-            Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
+            gimbal.yaw.spd_set = PID_Cal(
+                &gimbal.yaw.pos_pid,
+                gimbal.yaw.pos_now,
+                gimbal.yaw.pos_set);
         }
-        else if (Chassis.region_code == 5 && !Chassis.alignment_done)
+        /* 区域5对齐中: 以规划速度递增目标, 位置环跟踪 */
+        else if (chassis.region_code == 5 && !chassis.alignment_done)
         {
-            // 颠簸路段未对齐：大yaw位置环锁定方向
-            Gimbal.big_yaw.big_yaw_location_set = Gimbal.big_yaw.big_yaw_location_now + Gimbal.big_yaw.planning_speed;
-            Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
+            gimbal.yaw.pos_set = gimbal.yaw.pos_now + gimbal.yaw.planning_spd;
+            gimbal.yaw.spd_set = PID_Cal(
+                &gimbal.yaw.pos_pid,
+                gimbal.yaw.pos_now,
+                gimbal.yaw.pos_set);
         }
+        /* 默认扫描: 固定角速度旋转 */
         else
         {
-            // 正常导航 或 对齐已完成：速度环扫描
-            Gimbal.big_yaw.big_yaw_speed_set = 120.0f;
+            gimbal.yaw.spd_set = 120.0f;
         }
-        Gimbal.big_yaw.current = PID_Cal(&Gimbal.big_yaw.big_yaw_speed_pid, Gimbal.big_yaw.big_yaw_speed_now, Gimbal.big_yaw.big_yaw_speed_set);
+
+        /* 速度环 → 力矩输出 */
+        gimbal.yaw.current = PID_Cal(
+            &gimbal.yaw.spd_pid,
+            gimbal.yaw.spd_now,
+            gimbal.yaw.spd_set);
         return;
     }
 
-    // 其他模式：位置+速度双环PID
-    Gimbal.big_yaw.big_yaw_speed_set = PID_Cal(&Gimbal.big_yaw.big_yaw_location_pid, Gimbal.big_yaw.big_yaw_location_now, Gimbal.big_yaw.big_yaw_location_set);
-    Gimbal.big_yaw.current = PID_Cal(&Gimbal.big_yaw.big_yaw_speed_pid, Gimbal.big_yaw.big_yaw_speed_now, Gimbal.big_yaw.big_yaw_speed_set);
+    /* ---- 默认模式: 位置 + 速度 双环控制 ---- */
 
-    // 底盘角速度前馈：抵消小陀螺对大Yaw的扰动力矩
-    // #define BIG_YAW_FEEDFORWARD_KFF  0.2f
-    // Gimbal.big_yaw.current -= BIG_YAW_FEEDFORWARD_KFF * R_speed;
+    /* 位置环 → 速度目标 */
+    gimbal.yaw.spd_set = PID_Cal(
+        &gimbal.yaw.pos_pid,
+        gimbal.yaw.pos_now,
+        gimbal.yaw.pos_set);
+
+    /* 速度环 → 力矩输出 */
+    gimbal.yaw.current = PID_Cal(
+        &gimbal.yaw.spd_pid,
+        gimbal.yaw.spd_now,
+        gimbal.yaw.spd_set);
 }
 
-
-/*-------------------- Control --------------------*/
+/* -------------------- Control -------------------- */
 
 /**
- * @brief          电流值设置
- * @param          none 
- * @retval         none
+ * @brief  云台力矩输出
+ *         锁定模式下输出0力矩, 否则输出Calculator计算结果
  */
-void Gimbal_Controller()
+static void Gimbal_Controller()
 {
-    if(Global.Control.mode != LOCK)
+    float tor = 0.0f;
+    if (Global.Control.mode != LOCK)
     {
-        DMMotor_Set(BIGYAWMotor,
-                 0,
-                 0,
-                 Gimbal.big_yaw.current,
-                 0,
-                 0);
+        tor = gimbal.yaw.current;
     }
-    else
-    {
-        DMMotor_Set(BIGYAWMotor,
-                 0,
-                 0,
-                 0,
-                 0,
-                 0);
-    }
-       
+    DMMotor_Set(BIGYAWMotor, 0, 0, tor, 0, 0);
 }
 
-
-/*-------------------- Task --------------------*/
+/* -------------------- Set -------------------- */
 
 /**
- * @brief          云台任务
- * @param          none
- * @retval         none
+ * @brief  设置Pitch目标角度 (带上下限限幅)
+ * @param  angle  目标角度 (degree)
  */
-void Gimbal_Tasks(void)
-{
-#if (USE_GIMBAL != 0)
-	// 云台数据更新
-	Gimbal_Updater();
-    // 云台控制解算
-    Gimbal_Calculator();
-	// 云台电机控制
-	Gimbal_Controller();
-#endif
-}
-
-
-/*-------------------- Set --------------------*/
-/**
- * @brief 设置云台PITCHI轴角度
- *
- * @param angle 云台PITCHI轴角度
- */
-void Gimbal_SetPitchAngle(float angle)
+static void Gimbal_SetPitch(float angle)
 {
     if (angle < PITCHI_MIN_ANGLE)
         angle = PITCHI_MIN_ANGLE;
@@ -224,21 +204,37 @@ void Gimbal_SetPitchAngle(float angle)
     Global.Gimbal.input.pitch = angle;
 }
 
-/**          
- * @brief 设置云台YAW轴角度
- *
- * @param angle 云台eYAW轴角度
+/**
+ * @brief  设置Yaw目标角度
+ * @param  angle  目标角度 (degree)
  */
-void Gimbal_SetYawAngle(float angle)
+static void Gimbal_SetYaw(float angle)
 {
     Global.Gimbal.input.yaw = angle;
 }
 
-void Pack_RelativeAngle(uint8_t data[8])
-{
-    static uint8_t seq = 0;
+/* =================== extern "C" 接口 =================== */
 
-    Chassis.relative_angle = DMMotor_GetData(BIGYAWMotor).motor_data.para.angle_cnt - BIG_YAW_ZERO;
-    float_to_bytes(Chassis.relative_angle, &data[0]);
-    float_to_bytes(Gimbal.big_yaw.big_yaw_speed_now, &data[4]);
+extern "C" void Gimbal_Init(void)
+{
+    Gimbal_InitMotor();
+}
+
+extern "C" void Gimbal_Tasks(void)
+{
+#if (USE_GIMBAL != 0)
+    Gimbal_Update();
+    Gimbal_Calculator();
+    Gimbal_Controller();
+#endif
+}
+
+extern "C" void Gimbal_SetPitchAngle(float a)
+{
+    Gimbal_SetPitch(a);
+}
+
+extern "C" void Gimbal_SetYawAngle(float a)
+{
+    Gimbal_SetYaw(a);
 }
