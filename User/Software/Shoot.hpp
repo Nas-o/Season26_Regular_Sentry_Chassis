@@ -27,6 +27,9 @@ void Shoot_Tasks(void);
 #include "pid.hpp"
 #include "motor.hpp"
 
+namespace robot::shoot 
+{
+
 /* 摩擦轮速度枚举 */
 enum shoot_speed_e
 {
@@ -50,14 +53,14 @@ enum trigger_speed_e
 };
 
 /* 单发限位参数 */
-#define A_BULLET_ECD 85599
-#define TRIGGER_ONE_BULLET_ECD   ((int32_t)A_BULLET_ECD)
-#define TRIGGER_EXTRA_ECD        (150)
-#define SINGLE_DONE_ECD_TH     1200
-#define STOP_FIRE_TIMEOUT_MS     2000U
-#define TRIGGER_ANGLE_SPEED_MAX  6000.0f
+constexpr int32_t  kBulletEcd             = 85599;
+constexpr int32_t  kTriggerOneBulletEcd   = kBulletEcd;
+constexpr int32_t  kTriggerExtraEcd       = 150;
+constexpr int32_t  kSingleDoneEcdTh       = 1200;
+constexpr uint32_t kStopFireTimeoutMs     = 2000U;
+constexpr float    kTriggerAngleSpeedMax  = 6000.0f;
 
-/* 电机宏 */
+/* 电机宏 (外部C函数引用) */
 #define SHOOTMotor_init(type, id)    DJIMotor_Init(type, id)
 #define SHOOTMotor_set(val, id)      DJIMotor_Set(val, id)
 #define TriggerMotor_init(type, id)  DJIMotor_Init(type, id)
@@ -103,8 +106,8 @@ public:
     stop_fire_state_e   stop_fire_state   = STOP_FIRE_DISABLE;
 
     /* 公开方法 */
-    void Init();
-    void Tasks();
+    void init();
+    void tasks();
 
 private:
     /* PID */
@@ -114,17 +117,19 @@ private:
     pid_t trigger_angle_pid_{};
 
     /* 内部方法 */
-    void Updater();
-    void Calculator();
-    void Controller();
-    void StopFireFSM();
+    void updater();
+    void calculator();
+    void controller();
+    void stopFireFsm();
 
     /* 工具 */
-    static float GetBaseSpeed(uint8_t trigger_mode);
-    static uint8_t IsSpeedMode(uint8_t mode);
+    static float getBaseSpeed(uint8_t trigger_mode);
+    static uint8_t isSpeedMode(uint8_t mode);
 };
 
-extern Shooter shooter;
+} // namespace robot::shoot
+
+extern robot::shoot::Shooter shooter;
 
 #endif /* __cplusplus */
 #endif /* __SHOOT_H__ */

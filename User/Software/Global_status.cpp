@@ -1,5 +1,5 @@
 #include "Global_status.hpp"
 
-GlobalStatus_t  Global;
-
+GlobalStatus  Global;
+ChassisMode next_chassis_mode;
 

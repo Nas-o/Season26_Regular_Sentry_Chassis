@@ -111,15 +111,15 @@ void Pack_RefereeData3(uint8_t data[kFrameLen])
 // 底盘平移速度: vx(取反适配坐标系), vy(取反适配坐标系)
 static void Receive_XY_Speed(uint8_t data[kFrameLen])
 {
-    chassis.vx_ = -LoadFloat(&data[0]);
-    chassis.vy_ = -LoadFloat(&data[4]);
+    chassis.vx = -LoadFloat(&data[0]);
+    chassis.vy = -LoadFloat(&data[4]);
 }
 
 // 底盘旋转速度 + 云台Yaw目标角
 static float speed_yaw;
 static void Receive_R_Yaw(uint8_t data[kFrameLen])
 {
-    chassis.vr_ = LoadFloat(&data[0]);
+    chassis.vr = LoadFloat(&data[0]);
     speed_yaw   = LoadFloat(&data[4]);
     Global.Gimbal.input.yaw = speed_yaw;
 }
@@ -127,8 +127,8 @@ static void Receive_R_Yaw(uint8_t data[kFrameLen])
 // 控制模式 + 底盘运动模式
 static void Receive_Control_Mode(uint8_t data[kFrameLen])
 {
-    Global.Control.mode = (enum control_mode_e)(int)LoadFloat(&data[0]);
-    Global.Chassis.mode = (enum chassis_mode_e)(int)LoadFloat(&data[4]);
+    Global.Control.mode = (control_mode_e)(int)LoadFloat(&data[0]);
+    Global.Chassis.mode = (chassis_mode_e)(int)LoadFloat(&data[4]);
 }
 
 // IMU姿态: pitch + yaw累计角
@@ -158,8 +158,8 @@ static void Receive_Saltation_Mode(uint8_t data[kFrameLen])
 // 射击触发模式 + 自瞄模式
 static void Receive_Trigger_Mode(uint8_t data[kFrameLen])
 {
-    Global.Shoot.trigger_mode = (enum trigger_mode_e)(int)LoadFloat(&data[0]);
-    Global.Auto.mode          = (enum auto_mode_e)(int)LoadFloat(&data[4]);
+    Global.Shoot.trigger_mode = (trigger_mode_e)(int)LoadFloat(&data[0]);
+    Global.Auto.mode          = (auto_mode_e)(int)LoadFloat(&data[4]);
 }
 
 /* ============================================================

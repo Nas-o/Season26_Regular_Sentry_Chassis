@@ -1,8 +1,7 @@
 /**
  * @file    Chassis.hpp
- * @brief   舵轮底盘控制器 (Swerve Drive Controller)
- * @author  Nas (refactored 2026-05)
- * @note    使用 class 封装底盘状态与控制逻辑
+ * @brief   舵轮底盘控制器 
+ * @author  Nas 
  */
 #ifndef __CHASSIS_H__
 #define __CHASSIS_H__
@@ -33,10 +32,12 @@ uint8_t Chassis_GetAligning(void);
 #include "CAN_receive_send.hpp"
 #include "PowerControl.hpp"
 
+namespace robot::chassis {
+
 /* 轮位索引 */
 enum WheelPos : uint8_t { FL = 0, FR, BL, BR, WHEEL_NUM = 4 };
 
-/* ---- 电机配置宏 ---- */
+/* ---- 电机配置宏 (编译开关/外部宏引用) ---- */
 #define CHASSIS_MAX_CURRENT MAX_CURRENT
 
 /* ---- 驱动电机 (M3508) ---- */
@@ -86,38 +87,39 @@ public:
     RampGenerator ramp_vx{}, ramp_vy{}, ramp_vw{};
 
     /* --- 速度输入 (由CAN接收或遥控器设置) --- */
-    float vx_ = 0, vy_ = 0, vr_ = 0;
+    float vx = 0, vy = 0, vr = 0;
 
     /* 公开方法 */
-    void Init();
-    void Tasks();
+    void init();
+    void tasks();
 
-    void SetX(float x) { vx_ = x; }
-    void SetY(float y) { vy_ = y; }
-    void SetR(float r);
+    void setX(float x) { vx = x; }
+    void setY(float y) { vy = y; }
+    void setR(float r);
 
 private:
     /* 内部PID */
     pid_t follow_pid_{};
     pid_t heading_pid_{};
-    pid_t power_pid_{};
 
     /* 随机运动状态 */
     struct { int interval = 250; int small_cnt = 0; int valve = 0; } random_state_{};
 
     /* 内部方法 */
-    void InitMotor();
-    void Update();
-    void RudderCalculation(float x, float y, float w);
-    void NearbyTransposition();
-    float FollowUpdate();
-    float HeadingAlign();
-    void Calculator(float vx, float vy, float vw);
-    void PowerTotal(float total_max);
-    void Controller();
+    void initMotor();
+    void update();
+    void rudderCalculation(float x, float y, float w);
+    void nearbyTransposition();
+    float followUpdate();
+    float headingAlign();
+    void calculator(float vx, float vy, float vw);
+    void powerTotal(float total_max);
+    void controller();
 };
 
-extern Chassis chassis;
+} // namespace robot::chassis
+
+extern robot::chassis::Chassis chassis;
 
 #endif /* __cplusplus */
 #endif /* __CHASSIS_H__ */

@@ -1,10 +1,12 @@
 /**
- * @file    Chassis.cpp
- * @brief   舵轮底盘控制器实现
- * @author  Nas (refactored 2026-05)
- * @note    使用 class 封装底盘状态与控制逻辑
- *          4个 M3508 驱动电机 (速度环)
- *          4个 GM6020 舵向电机 (位置环+速度环)
+ * @file Chassis.cpp
+ * @author Nas (1319621819@qq.com)
+ * @brief 舵轮底盘控制器
+ * @version 0.1
+ * @date 2026-06-16
+ * 
+ * @copyright Copyright (c) 2026
+ * 
  */
 #include <cmath>
 #include <cstdlib>
@@ -25,31 +27,37 @@
 #include "robot_param.hpp"
 
 /* ============ 全局实例 ============ */
-Chassis chassis;
+robot::chassis::Chassis chassis;
+
+namespace robot::chassis {
+
+namespace {
 
 /* ============ 静态配置 ============ */
-static constexpr uint16_t INIT_ECD[WHEEL_NUM]       = {918, 4426, 3020, 7746};
-static constexpr float    DRIVE_SIGN[WHEEL_NUM]     = {1.0f, 1.0f, 1.0f, 1.0f};
-static constexpr float    STEER_SIN_SIGN[WHEEL_NUM] = {-1, 1, -1, 1};
-static constexpr float    STEER_COS_SIGN[WHEEL_NUM] = {1, 1, -1, -1};
+constexpr uint16_t kInitEcd[WHEEL_NUM]       = {918, 4426, 3020, 7746};
+constexpr float    kDriveSign[WHEEL_NUM]     = {1.0f, 1.0f, 1.0f, 1.0f};
+constexpr float    kSteerSinSign[WHEEL_NUM]  = {-1, 1, -1, 1};
+constexpr float    kSteerCosSign[WHEEL_NUM]  = {1, 1, -1, -1};
 
 /* 电机ID配置表 */
-static constexpr std::array<DJIcan_id, WHEEL_NUM> DRIVE_ID = {
+constexpr std::array<DJIcan_id, WHEEL_NUM> kDriveId = 
+{
     WHEEL_MOVE_FL, WHEEL_MOVE_FR, WHEEL_MOVE_BL, WHEEL_MOVE_BR
 };
-static constexpr std::array<DJIcan_id, WHEEL_NUM> STEER_ID = {
+constexpr std::array<DJIcan_id, WHEEL_NUM> kSteerId = 
+{
     WHEEL_TURN_FL, WHEEL_TURN_FR, WHEEL_TURN_BL, WHEEL_TURN_BR
 };
 
 /* 舵轮几何 (运行时转为弧度) */
-static float deta[WHEEL_NUM] = {45.0f, 45.0f, 45.0f, 45.0f};
+float deta[WHEEL_NUM] = {45.0f, 45.0f, 45.0f, 45.0f};
 
 /* ============ 工具函数 ============ */
 
 /**
  * @brief  将角度限制到 [-180, 180] 范围
  */
-static float AngleLimit(float angle)
+float angleLimit(float angle)
 {
     uint32_t mul = (uint32_t)(fabsf(angle) / 180.0f);
     if (angle > 180.0f)
@@ -63,7 +71,7 @@ static float AngleLimit(float angle)
  * @brief  将 x 归一化到 [-modulus/2, modulus/2] 范围
  *         用于ECD编码器差值的周期化处理
  */
-static float ModNorm(float x, float modulus)
+float modNorm(float x, float modulus)
 {
     float tmp = fmodf(x + modulus / 2.0f, modulus);
     if (tmp < 0.0f)
@@ -71,25 +79,27 @@ static float ModNorm(float x, float modulus)
     return tmp - modulus / 2.0f;
 }
 
+} // anonymous namespace
+
 /* ============================================================
  *  Chassis 类实现
  * ============================================================ */
 
-void Chassis::Init()
+void Chassis::init()
 {
-    InitMotor();
+    initMotor();
 }
 
 /**
  * @brief  初始化底盘所有电机、PID参数及功率限制器
  */
-void Chassis::InitMotor()
+void Chassis::initMotor()
 {
     /* 电机注册 */
     for (int i = 0; i < WHEEL_NUM; i++)
     {
-        DJIMotor_Init(DJI_M3508, DRIVE_ID[i]);   /* 驱动电机 */
-        DJIMotor_Init(DJI_GM6020, STEER_ID[i]);   /* 舵向电机 */
+        DJIMotor_Init(DJI_M3508, kDriveId[i]);   /* 驱动电机 */
+        DJIMotor_Init(DJI_GM6020, kSteerId[i]);   /* 舵向电机 */
     }
 
     /* 驱动电机 PID (速度环) */
@@ -121,11 +131,6 @@ void Chassis::InitMotor()
             0.5f, 0.0f, 0.0f, 0.0f,
             120, 40);
 
-    /* 功率闭环 PID */
-    PID_Set(&power_pid_,
-            0.04f, 0.0f, 0.01f, 0,
-            0.09f, 0.09f);
-
     /* 功率控制模块初始化 */
     PowerControl_Init();
 
@@ -136,7 +141,7 @@ void Chassis::InitMotor()
     for (int i = 0; i < WHEEL_NUM; i++)
     {
         wheel[i].steer.now = 0;
-        wheel[i].steer.set = INIT_ECD[i];
+        wheel[i].steer.set = kInitEcd[i];
     }
 
     /* deta角度转弧度 */
@@ -156,16 +161,16 @@ void Chassis::InitMotor()
  * @brief  更新底盘传感器数据
  *         从电机编码器读取舵向角度和驱动轮速
  */
-void Chassis::Update()
+void Chassis::update()
 {
     for (int i = 0; i < WHEEL_NUM; i++)
     {
         /* 舵向: 读取当前编码器值 */
         wheel[i].steer.now =
-            DJIMotor_GetData(STEER_ID[i]).ecd;
+            DJIMotor_GetData(kSteerId[i]).ecd;
         /* 驱动: RPM -> rad/s -> 线速度 (m/s) */
         wheel[i].drive.current_velocity =
-            DJIMotor_GetData(DRIVE_ID[i]).round_speed * RPM_TO_RAD_S * WHEEL_RADIUS;
+            DJIMotor_GetData(kDriveId[i]).round_speed * RPM_TO_RAD_S * WHEEL_RADIUS;
     }
 }
 
@@ -179,7 +184,7 @@ void Chassis::Update()
  * @note   公式: angle = atan2(y ± w*cos45, x ± w*sin45)
  *         符号由 STEER_COS_SIGN / STEER_SIN_SIGN 决定各轮位置
  */
-void Chassis::RudderCalculation(float x, float y, float w)
+void Chassis::rudderCalculation(float x, float y, float w)
 {
     w *= WHEEL_TRACK;
 
@@ -193,8 +198,8 @@ void Chassis::RudderCalculation(float x, float y, float w)
     {
         for (int i = 0; i < WHEEL_NUM; i++)
         {
-            float vy_comp = y - STEER_COS_SIGN[i] * w * 0.707107f;
-            float vx_comp = x + STEER_SIN_SIGN[i] * w * 0.707107f;
+            float vy_comp = y - kSteerCosSign[i] * w * 0.707107f;
+            float vx_comp = x + kSteerSinSign[i] * w * 0.707107f;
             wheel[i].steer.set_angle =
                 atan2f(vy_comp, vx_comp) * 180.0f / PI;
         }
@@ -204,7 +209,7 @@ void Chassis::RudderCalculation(float x, float y, float w)
     for (int i = 0; i < WHEEL_NUM; i++)
     {
         wheel[i].steer.set_ecd =
-            INIT_ECD[i] + wheel[i].steer.set_angle * 8192.0f / 360.0f;
+            kInitEcd[i] + wheel[i].steer.set_angle * 8192.0f / 360.0f;
         wheel[i].steer.set = (int32_t)wheel[i].steer.set_ecd;
     }
 }
@@ -215,7 +220,7 @@ void Chassis::RudderCalculation(float x, float y, float w)
  * @brief  就近转位: 避免舵向转动超过90°, 通过反转驱动方向代替
  * @note   使用余弦连续调制: direction = cos(偏差角), 在±90°边界平滑过渡
  */
-void Chassis::NearbyTransposition()
+void Chassis::nearbyTransposition()
 {
     for (int i = 0; i < WHEEL_NUM; i++)
     {
@@ -223,7 +228,7 @@ void Chassis::NearbyTransposition()
         DriveUnit &dr = wheel[i].drive;
 
         /* 计算目标ECD与当前ECD的归一化偏差 (±4096范围) */
-        st.target_angle = ModNorm(st.set - st.now, 8192.0f);
+        st.target_angle = modNorm(st.set - st.now, 8192.0f);
 
         /* cos值用于连续调制驱动方向, 在±90°边界平滑过渡 */
         float cos_val = cosf(st.target_angle * (2.0f * PI / 8192.0f));
@@ -236,11 +241,11 @@ void Chassis::NearbyTransposition()
         /* 偏差超过90°: 转到反向位置, 由cos_val反转驱动方向 */
         else
         {
-            st.set = ModNorm(st.target_angle + 4096.0f, 8192.0f) + st.now;
+            st.set = modNorm(st.target_angle + 4096.0f, 8192.0f) + st.now;
         }
 
         /* 驱动方向 = 配置符号 × 余弦调制 */
-        dr.direction = DRIVE_SIGN[i] * cos_val;
+        dr.direction = kDriveSign[i] * cos_val;
     }
 }
 
@@ -250,9 +255,9 @@ void Chassis::NearbyTransposition()
  * @brief  底盘跟随云台: 根据相对角差PID输出旋转速度
  * @return 底盘旋转角速度 (rad/s), 相对角≤2°时返回0
  */
-float Chassis::FollowUpdate()
+float Chassis::followUpdate()
 {
-    relative_angle = AngleLimit(relative_angle);
+    relative_angle = angleLimit(relative_angle);
 
     /* 死区: 相对角很小时不跟随, 避免抖动 */
     if (fabsf(relative_angle) <= 2.0f)
@@ -265,10 +270,10 @@ float Chassis::FollowUpdate()
  * @brief  底盘航向对齐: 根据航向误差PID输出旋转速度
  * @return 底盘旋转角速度 (rad/s), 误差<=2度时返回0
  */
-float Chassis::HeadingAlign()
+float Chassis::headingAlign()
 {
     float chassis_yaw = imu.yaw_cnt - relative_angle;
-    float err = AngleLimit(heading_target - chassis_yaw);
+    float err = angleLimit(heading_target - chassis_yaw);
 
     /* 死区: 航向误差很小时不修正 */
     if (fabsf(err) <= 2.0f)
@@ -286,10 +291,10 @@ float Chassis::HeadingAlign()
  * @param  vw  底盘旋转角速度 (rad/s)
  * @note   流程: 就近转位 -> 舵向位置环 -> 驱动速度分解 -> 舵向速度环 -> 驱动速度环
  */
-void Chassis::Calculator(float vx, float vy, float vw)
+void Chassis::calculator(float vx, float vy, float vw)
 {
     /* 第1步: 就近转位 (避免舵轮转超90度) */
-    NearbyTransposition();
+    nearbyTransposition();
 
     /* 第2步: 舵向位置环 -> 速度目标 */
     for (int i = 0; i < WHEEL_NUM; i++)
@@ -302,8 +307,8 @@ void Chassis::Calculator(float vx, float vy, float vw)
     float w = vw * WHEEL_TRACK;
     for (int i = 0; i < WHEEL_NUM; i++)
     {
-        float vx_c = vx + STEER_SIN_SIGN[i] * w * sinf(deta[i]);
-        float vy_c = vy + STEER_COS_SIGN[i] * w * cosf(deta[i]);
+        float vx_c = vx + kSteerSinSign[i] * w * sinf(deta[i]);
+        float vy_c = vy + kSteerCosSign[i] * w * cosf(deta[i]);
         float v_mag = sqrtf(vx_c * vx_c + vy_c * vy_c);
         wheel[i].drive.target_velocity = v_mag * wheel[i].drive.direction;
     }
@@ -312,20 +317,24 @@ void Chassis::Calculator(float vx, float vy, float vw)
     for (int i = 0; i < WHEEL_NUM; i++)
     {
         SteerUnit &st = wheel[i].steer;
-        st.current = (int16_t)PID_Cal(
+        st.current = (int16_t)PID_Cal
+        (
             &st.spd_pid,
-            DJIMotor_GetData(STEER_ID[i]).speed_rpm,
-            st.spd_set);
+            DJIMotor_GetData(kSteerId[i]).speed_rpm,
+            st.spd_set
+        );
     }
 
     /* 第5步: 驱动速度环 -> 电流 */
     for (int i = 0; i < WHEEL_NUM; i++)
     {
         DriveUnit &dr = wheel[i].drive;
-        dr.current = (int16_t)PID_Cal(
+        dr.current = (int16_t)PID_Cal
+        (
             &dr.pid,
             dr.current_velocity,
-            dr.target_velocity);
+            dr.target_velocity
+        );
     }
 }
 
@@ -335,7 +344,7 @@ void Chassis::Calculator(float vx, float vy, float vw)
  * @brief  调用 PowerControl 模块对底盘电流执行功率限幅
  * @param  total_max  本周期功率预算总额 (W)
  */
-void Chassis::PowerTotal(float total_max)
+void Chassis::powerTotal(float total_max)
 {
     int16_t w_c[WHEEL_NUM], s_c[WHEEL_NUM];
     float   w_s[WHEEL_NUM], s_s[WHEEL_NUM];
@@ -345,8 +354,8 @@ void Chassis::PowerTotal(float total_max)
     {
         w_c[i] = wheel[i].drive.current;
         s_c[i] = wheel[i].steer.current;
-        w_s[i] = DJIMotor_GetData(DRIVE_ID[i]).round_speed * RPM_TO_RAD_S;
-        s_s[i] = DJIMotor_GetData(STEER_ID[i]).speed_rpm * RPM_TO_RAD_S;
+        w_s[i] = DJIMotor_GetData(kDriveId[i]).round_speed * RPM_TO_RAD_S;
+        s_s[i] = DJIMotor_GetData(kSteerId[i]).speed_rpm * RPM_TO_RAD_S;
     }
 
     /* 调用 PowerControl 模块统一限幅 */
@@ -367,29 +376,29 @@ void Chassis::PowerTotal(float total_max)
  *         非锁定模式: 输出驱动+舵向电流
  *         锁定模式: 全部置零
  */
-void Chassis::Controller()
+void Chassis::controller()
 {
     if (Global.Control.mode != LOCK)
     {
         for (int i = 0; i < WHEEL_NUM; i++)
         {
-            DJIMotor_Set(wheel[i].drive.current, DRIVE_ID[i]);
-            DJIMotor_Set(wheel[i].steer.current, STEER_ID[i]);
+            DJIMotor_Set(wheel[i].drive.current, kDriveId[i]);
+            DJIMotor_Set(wheel[i].steer.current, kSteerId[i]);
         }
     }
     else
     {
         for (int i = 0; i < WHEEL_NUM; i++)
         {
-            DJIMotor_Set(0, DRIVE_ID[i]);
-            DJIMotor_Set(0, STEER_ID[i]);
+            DJIMotor_Set(0, kDriveId[i]);
+            DJIMotor_Set(0, kSteerId[i]);
         }
     }
 }
 
 /* -------------------- Set -------------------- */
 
-void Chassis::SetR(float r)
+void Chassis::setR(float r)
 {
     Global.Chassis.input.r = r;
 }
@@ -400,7 +409,7 @@ void Chassis::SetR(float r)
  * @brief  底盘主控制循环 (由RTOS任务周期调用)
  *         流程: 对齐判断 -> 跟随/独立模式 -> 舵角计算 -> 速度分解 -> 功率限制 -> 电流输出
  */
-void Chassis::Tasks()
+void Chassis::tasks()
 {
 #if (USE_CHASSIS != 0)
 
@@ -419,9 +428,9 @@ void Chassis::Tasks()
          && region_code == 5
          && !alignment_done);
 
-    float final_r  = vr_;
-    float final_vx = vx_;
-    float final_vy = vy_;
+    float final_r  = vr;
+    float final_vx = vx;
+    float final_vy = vy;
 
     if (use_follow)
     {
@@ -429,49 +438,51 @@ void Chassis::Tasks()
          * 跟随模式: 底盘跟随云台旋转
          * 同时将世界坐标系速度旋转到底盘坐标系
          */
-        final_r = FollowUpdate();
+        final_r = followUpdate();
         float theta = relative_angle * (PI / 180.0f);
         float cos_t = cosf(theta);
         float sin_t = sinf(theta);
-        final_vx = vx_ * cos_t - vy_ * sin_t;
-        final_vy = vx_ * sin_t + vy_ * cos_t;
+        final_vx = vx * cos_t - vy * sin_t;
+        final_vy = vx * sin_t + vy * cos_t;
     }
 
     /* ---- 控制流水线 ---- */
 
     /* 1. 计算各轮舵向目标角度 */
-    RudderCalculation(final_vx, final_vy, final_r);
+    rudderCalculation(final_vx, final_vy, final_r);
 
     /* 2. 更新传感器数据 */
-    Update();
+    update();
 
     /* 3. 速度分解 + PID -> 电流 */
-    Calculator(final_vx, final_vy, final_r);
+    calculator(final_vx, final_vy, final_r);
 
     /* 4. 功率限制 (仅裁判系统有功率限制时生效) */
     if (Referee_data.Chassis_Power_Limit > 0)
     {
         float lim = PowerControl_BudgetUpdate();
         if (lim > 0.0f)
-            PowerTotal(lim);
+            powerTotal(lim);
     }
 
     /* 5. 电流输出到电机 */
-    Controller();
+    controller();
 
 #endif
 }
+
+} // namespace robot::chassis
 
 /* =================== extern "C" 接口 =================== */
 
 extern "C" void Chassis_Init(void)
 {
-    chassis.Init();
+    chassis.init();
 }
 
 extern "C" void Chassis_Tasks(void)
 {
-    chassis.Tasks();
+    chassis.tasks();
 }
 
 extern "C" uint8_t Chassis_GetAligning(void)

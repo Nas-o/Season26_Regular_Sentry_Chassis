@@ -1,48 +1,50 @@
 #ifndef __GLOBAL_STATUS_H__
-#define __GLOBAL_STATUS_H__
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define __GLOBAL_STATUS_H__
+
 #include "stdint.h"
 
-enum chassis_mode_e
+typedef enum ChassisMode
 {
     FLOW_Gimbal,   // 底盘跟随
     SPIN_P, // 正小陀螺
     SPIN_N, // 逆小陀螺
     Navigation, //导航模式
     FLOW_Chassis,
-};
+} ChassisMode;
 
-enum pitch_mode_e
+typedef enum PitchMode
 {
     Pitch_disability, // pitch电机失能
     Pitch_ability,   // pitch电机使能成功
-};
+} PitchMode;
 
-enum small_pitch_mode_e
+typedef enum SmallPitchMode
 {
     level,
     rush,
     outpost,
     base,
     smallPitch_target_num,
-};
+} SmallPitchMode;
 
-enum pitch_lock_e
+typedef enum PitchLock
 {
     Pitch_move,
     Pitch_lock,
-};
+} PitchLock;
 
-enum yaw_lock_e
+typedef enum YawLock
 {
-    Yaw_move,
+    Yay_move,
     Yaw_lock,
-};
+} YawLock;
 
-enum trigger_mode_e
+typedef enum TriggerMode
 {
     TRIGGER_CLOSE,
     HIGH,
@@ -53,69 +55,69 @@ enum trigger_mode_e
     ONLY_AIM_HIGH,//5hz
     ONLY_AIM_MID,//3hz
     ONLY_AIM_LOW,//1hz
-};
+} TriggerMode;
 
-enum shoot_mode_e
+typedef enum ShootMode
 {
     CLOSE,
     READY,
     DEBUG_SHOOT, // 退弹使用
-};
+} ShootMode;
 
-enum shoot_fire_e
+typedef enum ShootFire
 {
     STOP,
     FIRE,
-};
+} ShootFire;
 
-enum Hanging_Shot_e
+typedef enum HangingShot
 {
     Hanging_Shot_CLOSE,
     Hanging_Shot_OPEN,
-};
+} HangingShot;
 
-enum glass_mode_e
+typedef enum GlassMode
 {
     Glass_close,
     Glass_open,
-};
+} GlassMode;
 
-enum ONtigger_e
+typedef enum OnTrigger
 {
     tigger_close,// 拨弹盘泄力
     tigger_open,
-};
+} OnTrigger;
 
-enum shoot_status_e
+typedef enum ShootStatus
 {
     NOK,
     OK,
-};
+} ShootStatus;
 
-enum auto_mode_e
+typedef enum AutoMode
 {
     NONE,       // 不启用自瞄
     CAR,        // 自瞄跟踪
-};
+} AutoMode;
 
-enum cap_mode_e
+typedef enum CapMode
 {
     Not_FULL, // 暂时不知道放啥
     FULL,
-};
+} CapMode;
 
-enum control_mode_e
+typedef enum ControlMode
 {
     RC,   // 运行
     LOCK, // 锁死
-};
+} ControlMode;
 
 typedef struct
 {
     /*底盘状态*/
     struct
     {
-        enum chassis_mode_e mode;
+        ChassisMode mode;
         struct
         {
             float x; // x轴移动速度
@@ -132,47 +134,48 @@ typedef struct
             float pitch;
             float yaw;
         } input;
-        enum pitch_mode_e pitch_mode;
-        enum small_pitch_mode_e small_pitch_target;
+        PitchMode pitch_mode;  
+        SmallPitchMode small_pitch_target;
 
         float pitch_offset;
         float small_pitch_offset;
         float Hanging_Shot_err;
-        enum pitch_lock_e pitch_lock;
-        enum yaw_lock_e yaw_lock;
+        PitchLock pitch_lock;  
+
+        YawLock yaw_lock; 
 
     } Gimbal;
     /*发射机构状态*/
     struct
     {
-        enum trigger_mode_e trigger_mode;
+        TriggerMode trigger_mode;
          struct
         {
             float speed_set;
             float ecd_set;
             float ecd_last;
         } trigger;
-        enum shoot_mode_e shoot_mode;
+        ShootMode shoot_mode;
         int16_t shoot_deviation;//射速误差
 
-        enum shoot_fire_e fire_status;// 发射Hanging_Shot,// 吊射模式
-        enum Hanging_Shot_e Hanging_Shot;
-        enum glass_mode_e glass_mode;
+        ShootFire fire_status;// 发射Hanging_Shot,// 吊射模式
+        HangingShot Hanging_Shot;
+        GlassMode glass_mode;
         
-        enum ONtigger_e ONtigger;
+        OnTrigger ONtigger;
         struct
         {
             float pitch_angle;
             float yaw_angle;
         } shoot_angle;
-        enum shoot_status_e shoot_status;
+        ShootStatus shoot_status;
         uint8_t mcu_fire_permit;              // 自瞄路径发射准入 (Auto_control.c 写)
-        enum trigger_mode_e manual_trigger_mode; // 纯手动档下想打什么档位 (remote_control.c 写)
+        TriggerMode manual_trigger_mode; // 纯手动档下想打什么档位 (remote_control.c 写)
     } Shoot;
     /*自瞄状态*/
     struct
     {
-        enum auto_mode_e mode;
+        AutoMode mode;
         struct
         {
             float shoot_yaw;             // 目标yaw (rad, 世界坐标系绝对值)
@@ -187,16 +190,35 @@ typedef struct
     /*电容状态*/
     struct
     {
-        enum cap_mode_e mode;
+        CapMode mode;
     } Cap;
     /*控制模式*/
     struct
     {
-        enum control_mode_e mode;
+        ControlMode mode;
     } Control;
-} GlobalStatus_t;
+} GlobalStatus;
 
-extern GlobalStatus_t Global;
+/* ---- 向后兼容旧命名 (供外部C文件使用) ---- */
+typedef ChassisMode     chassis_mode_e;
+typedef PitchMode       pitch_mode_e;
+typedef SmallPitchMode  small_pitch_mode_e;
+typedef PitchLock       pitch_lock_e;
+typedef YawLock         yaw_lock_e;
+typedef TriggerMode     trigger_mode_e;
+typedef ShootMode       shoot_mode_e;
+typedef ShootFire       shoot_fire_e;
+typedef HangingShot     Hanging_Shot_e;
+typedef GlassMode       glass_mode_e;
+typedef OnTrigger       ONtigger_e;
+typedef ShootStatus     shoot_status_e;
+typedef AutoMode        auto_mode_e;
+typedef CapMode         cap_mode_e;
+typedef ControlMode     control_mode_e;
+typedef GlobalStatus    GlobalStatus_t;
+
+extern GlobalStatus Global;
+extern ChassisMode next_chassis_mode;
 
 #ifdef __cplusplus
 }

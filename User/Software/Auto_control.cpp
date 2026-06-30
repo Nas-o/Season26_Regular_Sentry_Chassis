@@ -1,11 +1,13 @@
-/*
- * @Author: Nas(1319621819@qq.com)
- * @Date: 2025-11-03 00:07:24
- * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-21 03:19:28
- * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\Auto_control.c
+/**
+ * @file Auto_control.cpp
+ * @author Nas (1319621819@qq.com)
+ * @brief 自瞄控制器
+ * @version 0.1
+ * @date 2026-06-16
+ * 
+ * @copyright Copyright (c) 2026
+ * 
  */
-
 #include "Auto_control.hpp"
 #include "Global_status.hpp"
 #include "Gimbal.hpp"
@@ -161,7 +163,7 @@ void Decision_Transmission(Sentry_cmd_t *sentry_cmd_info, uint8_t *tx_buffer)
 {
     // 使用 uint8_t 指针直接操作缓冲区
     uint8_t *frame = tx_buffer;
-    static uint8_t seq = 0;
+    static uint8_t s_seq = 0;
     // 根据协议文档，哨兵自主决策指令(0x0120)需要发送给裁判系统服务器(0x8080)
     // 因此必须使用 机器人间交互数据(0x0301) 进行封装
     // 数据段包含: 交互数据头(6字节) + 决策数据(4字节) = 10字节
@@ -170,7 +172,7 @@ void Decision_Transmission(Sentry_cmd_t *sentry_cmd_info, uint8_t *tx_buffer)
     frame[0] = 0xA5; // SOF
     frame[1] = data_length & 0xFF;    
     frame[2] = (data_length >> 8) & 0xFF; 
-    frame[3] = seq++; 
+    frame[3] = s_seq++; 
     // 计算并填充 Header CRC8 (写入 frame[4])
     // 校验范围: frame[0] ~ frame[3] (4 bytes)
     append_CRC8_check_sum(frame, 5);
@@ -209,7 +211,7 @@ void Decision_Transmission(Sentry_cmd_t *sentry_cmd_info, uint8_t *tx_buffer)
     if (sentry_cmd_info->activate_energy_mechanism)
     decision_data |= (1 << 23);
     // bit 21-31: 保留 (默认为0)
-    // 将 32位 数据按 Little Endian 写入 frame[13]~frame[16]
+    // 将 32位 数据按小端序写入 frame[13]~frame[16]
     memcpy(&frame[13], &decision_data, 4);
     // 计算并追加 Frame CRC16 (2 bytes)
     // 校验范围: frame[0] ~ frame[16] (17 bytes)
@@ -242,7 +244,9 @@ void Auto_Control()
 }
 
 // 只填充 data，不发送，不声明自己的 buffer
-static void Pack_RefereeData1(uint8_t data[8])
+namespace {
+
+void Pack_RefereeData1(uint8_t data[8])
 {
     uint16_to_bytes(robot_status.current_HP,         &data[0]);
     uint16_to_bytes(robot_status.maximum_HP,         &data[2]);
@@ -251,7 +255,7 @@ static void Pack_RefereeData1(uint8_t data[8])
     uint16_to_bytes(game_status.stage_remain_time,   &data[6]);
 }
 
-static void Pack_RefereeData2(uint8_t data[8])
+void Pack_RefereeData2(uint8_t data[8])
 {
     uint16_to_bytes(Referee_data.projectile_allowance_17mm, &data[0]);
     uint16_to_bytes(game_robot_HP.ally_outpost_HP,          &data[2]);
@@ -259,7 +263,7 @@ static void Pack_RefereeData2(uint8_t data[8])
     uint8_to_bytes (Referee_data.Launching_Frequency,       &data[6]);
 }
 
-static void Pack_RefereeData3(uint8_t data[8])
+void Pack_RefereeData3(uint8_t data[8])
 {
     float_to_bytes(rfid_status.rfid_status,    &data[0]);
     float_to_bytes(Referee_data.Initial_SPEED, &data[4]);
@@ -273,20 +277,22 @@ typedef struct {
     uint8_t     phase;
 } GimbalTxEntry_t;
 
-static const GimbalTxEntry_t GimbalTxTable[] = {
+const GimbalTxEntry_t GimbalTxTable[] = {
     { CAN_ID_GIMBAL_RELATIVE_ANGLE, Pack_RelativeAngle,  1,  0 },
     { CAN_ID_REFEREE_DATA_1,        Pack_RefereeData1,  20,  2 },  // 50Hz, phase=2ms
     { CAN_ID_REFEREE_DATA_2,        Pack_RefereeData2,  20,  9 },  // 50Hz, phase=9ms
     { CAN_ID_REFEREE_DATA_3,        Pack_RefereeData3,  20, 16 },  // 50Hz, phase=16ms
 };
 
+} // anonymous namespace
+
 void Gimbal_CAN_SendAll(void)
 {
-    static uint8_t tick = 0;
+    static uint8_t s_tick = 0;
     uint8_t buf[8];
 
     for (uint8_t i = 0; i < sizeof(GimbalTxTable)/sizeof(GimbalTxTable[0]); i++) {
-        if (tick % GimbalTxTable[i].divider != GimbalTxTable[i].phase) {
+        if (s_tick % GimbalTxTable[i].divider != GimbalTxTable[i].phase) {
             continue;
         }
 
@@ -295,5 +301,5 @@ void Gimbal_CAN_SendAll(void)
         Fdcanx_SendData(&hfdcan2, GimbalTxTable[i].id, buf, 8);
     }
 
-    if (++tick >= 20) tick = 0;
+    if (++s_tick >= 20) s_tick = 0;
 }

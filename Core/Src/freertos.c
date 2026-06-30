@@ -1,7 +1,7 @@
 /*
  * @Date: 2025-10-24 19:37:34
  * @LastEditors: Nas(1319621819@qq.com)
- * @LastEditTime: 2026-05-21 09:05:30
+ * @LastEditTime: 2026-06-29 17:00:50
  * @FilePath: \Season26_Regular_Sentry_Chassis\Core\Src\freertos.c
  */
 /* USER CODE BEGIN Header */
@@ -313,16 +313,6 @@ void Motor_control_Task(void *argument)
         DJIMotor_SendCurrent(CAN_6020_1_4_ID, DJI_CAN_1);
         DMMotor_SendCtrl(DM_CAN_1_1);
       }
-   /*  else
-    {
-        uint8_t zero_data[8] = {0};
-        
-        
-        Fdcanx_SendData(&hfdcan1, CAN_20063508_1_4_send_ID, zero_data, 8);
-        Fdcanx_SendData(&hfdcan1, CAN_6020_1_4_send_ID, zero_data, 8);
-        Fdcanx_SendData(&hfdcan3, CAN_20063508_1_4_send_ID, zero_data, 8);
-        Fdcanx_SendData(&hfdcan3, CAN_6020_1_4_send_ID, zero_data, 8); 
-    } */
     send_toggle ^= 1;
     
     if (Global.Chassis.input.reset != 1)

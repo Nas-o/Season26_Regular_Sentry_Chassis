@@ -10,7 +10,8 @@
 #define __POWER_CONTROL_H__
 
 #ifdef __cplusplus
-extern "C" {
+extern "C" 
+{
 #endif
 
 #include "stdint.h"
@@ -51,10 +52,14 @@ void PowerControl_Apply(int16_t drive_cur[4], float drive_spd[4],
 
 #include "User_math.hpp"
 
+namespace robot::power_control 
+{
+
 /* ==================================================================
  * PowerLimiter — 单组电机 (4个) 的功率限制器
  * ================================================================== */
-class PowerLimiter {
+class PowerLimiter 
+{
 public:
     /* 电机功率模型参数 */
     float k0 = 0, k1 = 0, k2 = 0, k3 = 0;
@@ -65,51 +70,54 @@ public:
     float scaling       = 1.0f; // 缩放系数 (0~1)
 
     /* 设置电机参数 */
-    void SetParams(float _k0, float _k1, float _k2, float _k3);
+    void setParams(float _k0, float _k1, float _k2, float _k3);
 
     /* 预测本组 4 个电机的总功率 */
-    void Predict(int16_t current[4], float speed[4], bool is_steer);
+    void predict(int16_t current[4], float speed[4], bool is_steer);
 
     /* 根据功率预算限幅本组电流 */
-    void ApplyLimit(float budget, int16_t current[4], float speed[4], bool is_steer);
+    void applyLimit(float budget, int16_t current[4], float speed[4], bool is_steer);
 
 private:
     /* 估算单个电机的机械功率 */
-    float EstimateMotorPower(int16_t current_raw, float speed_rad, bool is_steer) const;
+    float estimateMotorPower(int16_t current_raw, float speed_rad, bool is_steer) const;
 
     /* 电流原始值 → 安培数转换 */
-    static float RawToAmpere(bool is_steer);
+    static float rawToAmpere(bool is_steer);
 };
 
 /* ==================================================================
  * PowerBudget — 慢环功率预算管理器
  * ================================================================== */
-class PowerBudget {
+class PowerBudget 
+{
 public:
-    void Reset();
-    float Update();
+    void reset();
+    float update();
 
 private:
     /* 超电额外功率调节 */
-    float cap_extra_power        = 0.0f;
-    float cap_voltage_last       = 0.0f;
+    float cap_extra_power_        = 0.0f;
+    float cap_voltage_last_       = 0.0f;
 
     /* Buffer Energy 慢闭环 */
-    float buffer_energy_derating = 0.0f;
+    float buffer_energy_derating_ = 0.0f;
 
     /* 实测功率保护 */
-    float power_derating         = 0.0f;
-    float power_filtered         = 0.0f;
+    float power_derating_         = 0.0f;
+    float power_filtered_         = 0.0f;
 
     /* 定时控制 */
-    uint32_t last_update_tick    = 0;
-    float    last_budget         = 60.0f;
+    uint32_t last_update_tick_    = 0;
+    float    last_budget_         = 60.0f;
 };
 
+} // namespace robot::power_control
+
 /* 全局实例 */
-extern PowerLimiter g_lim_wheel;
-extern PowerLimiter g_lim_steer;
-extern PowerBudget  g_power_budget;
+extern robot::power_control::PowerLimiter g_lim_wheel;
+extern robot::power_control::PowerLimiter g_lim_steer;
+extern robot::power_control::PowerBudget  g_power_budget;
 
 #endif /* __cplusplus */
 #endif /* __POWER_CONTROL_H__ */

@@ -1,41 +1,20 @@
 /*
  * @Date: 2025-08-31 21:36:57
- * @LastEditors: hao && (hao@qlu.edu.cn)
- * @LastEditTime: 2025-10-25 19:56:47
- * @FilePath: \Season-26-Code\User\Software\remote_control.h
+ * @LastEditors: Nas(1319621819@qq.com)
+ * @LastEditTime: 2026-06-05 12:58:29
+ * @FilePath: \Season26_Regular_Sentry_Chassis\User\Software\remote_control.hpp
  */
 #ifndef __REMOTE_CONTROL__
-#define __REMOTE_CONTROL__
 
 #ifdef __cplusplus
-extern "C" {
+extern "C" 
+{
 #endif
+
+#define __REMOTE_CONTROL__
+
 #include "stdint.h"
 #include "main.h"
-
-#define WAIT_W 0
-#define WAIT_S 1
-#define WAIT_A 2
-#define WAIT_D 3
-#define WAIT_Q 4
-#define WAIT_E 5
-#define WAIT_G 6
-#define WAIT_X 7
-#define WAIT_Z 8
-#define WAIT_C 9
-#define WAIT_B 10
-#define WAIT_V 11
-#define WAIT_F 12
-#define WAIT_R 13
-#define WAIT_CTRL 14
-#define WAIT_SHIFT 15
-#define WAIT_CTRL_Q 16
-#define WAIT_CTRL_E 17
-#define WAIT_MOUSE_Z 18
-#define WAIT_PRESSED_RIGH 19
-#define WAIT_SREIAL_STOP 20
-
-#define SIZE_OF_WAIT 25 // 消抖数组大小，要大于上面那些数
 
 typedef PACKED_STRUCT()
 {
@@ -61,18 +40,23 @@ typedef PACKED_STRUCT()
     {
         uint8_t custom_data[30]; // 自定义控制器数据
     } custom_robot;
-    enum Sreial_mode_e
+    enum SerialMode
     {
         Sreial_RC,  // 遥控器
         Sreial_KEY, // 键鼠
     } Sreial_mode;
     int online;
 }
-RC_ctrl_t;
+RcCtrl;
+
+/* ---- 向后兼容旧命名 ---- */
+typedef RcCtrl RC_ctrl_t;
 
 /*外部函数调用*/
 void Remote_Tasks(void);
-extern RC_ctrl_t RC_data;
+extern RcCtrl RC_data;
+
+
 
 #ifdef __cplusplus
 }

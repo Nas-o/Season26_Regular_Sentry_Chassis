@@ -17,42 +17,6 @@
 #include "cmsis_os2.h"
 
 
-
-
-/*----------------------------------- 按键消抖 --------------------------------------*/
-
-int16_t wait_time[SIZE_OF_WAIT] = {0}; // 键盘消抖用时间
-
-/**
- * @brief 统一消抖
- *
- * @param key 按键宏
- * @return uint8_t 0未到时间，1到时间
- */
-uint8_t Wait(uint8_t key)
-{
-    if (wait_time[key] >= 2)
-    {
-        wait_time[key]--;
-        return 0;
-    }
-    else if ((wait_time[key] == 0) || (wait_time[key] == 1))
-    {
-        wait_time[key]--;
-        return 1;
-    }
-    else
-    {
-        return 0;
-    }
-}
-
-void SetWait(uint8_t key)
-{
-    wait_time[key] = 300;
-}
-
-
 /*----------------------------------- 遥控数据更新 --------------------------------------*/
 /**
  * @brief 遥控数据来源于DT7遥控器
@@ -229,8 +193,8 @@ void RC_Controller()
         Global.Chassis.mode = SPIN_N;
     else
         Global.Chassis.mode = FLOW_Chassis;
-    chassis.SetX(RC_data.rc.ch[0] / 40.0f);
-    chassis.SetY(RC_data.rc.ch[1] / 40.0f);
+    chassis.setX(RC_data.rc.ch[0] / 40.0f);
+    chassis.setY(RC_data.rc.ch[1] / 40.0f);
     /*云台控制*/
     Gimbal_SetPitchAngle(Global.Gimbal.input.pitch + RC_data.rc.ch[3] / 2000.0f);
     Gimbal_SetYawAngle(Global.Gimbal.input.yaw - RC_data.rc.ch[2] / 2000.0f);

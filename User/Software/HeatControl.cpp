@@ -1,7 +1,7 @@
 /**
  * @file    HeatControl.cpp
  * @brief   拨弹盘热量控制模块 — 实现
- * @author  Nas (2026-05)
+ * @author  Nas (1319621819@qq.com) 
  *
  * @details 包含:
  *          1. HeatModel 类 — 本地热量预测 + smoothstep 速度系数
@@ -20,21 +20,23 @@
 #include "referee_system.hpp"
 
 /* ============ 热量控制核心参数 ============ */
-#define HEAT_VALID_LIMIT_MIN    1.0f      // Heat_Limit 最小有效值
-#define HEAT_VALID_COOLING_MIN  1.0f      // CooLing_Value 最小有效值
-#define HEAT_RESERVE            15.0f     // 预留安全热量余量 (绝对值)
-#define HEAT_WINDOW_SEC         1.5f      // 前瞻时间窗口 (秒)
-#define HEAT_K_MIN              0.15f     // 热量极限时保底速度比例
-#define HEAT_PER_BULLET_17MM    10.0f     // 每发 17mm 弹丸产生的热量值
+namespace 
+{
+    constexpr float    kHeatValidLimitMin   = 1.0f;      // Heat_Limit 最小有效值
+    constexpr float    kHeatValidCoolingMin  = 1.0f;      // CooLing_Value 最小有效值
+    constexpr float    kHeatReserve          = 15.0f;     // 预留安全热量余量 (绝对值)
+    constexpr float    kHeatWindowSec        = 1.5f;      // 前瞻时间窗口 (秒)
+    constexpr float    kHeatKMin             = 0.15f;     // 热量极限时保底速度比例
+    constexpr float    kHeatPerBullet17mm    = 10.0f;     // 每发 17mm 弹丸产生的热量值
+} 
 
 /* ============ 全局实例 ============ */
-HeatModel g_heat_model;
+robot::heat_control::HeatModel g_heat_model;
 
-/* ============================================================
- *  HeatModel 类实现
- * ============================================================ */
+namespace robot::heat_control 
+{
 
-float HeatModel::Clamp(float value, float min_val, float max_val)
+float HeatModel::clamp(float value, float min_val, float max_val)
 {
     if (value < min_val) return min_val;
     if (value > max_val) return max_val;
@@ -45,18 +47,18 @@ float HeatModel::Clamp(float value, float min_val, float max_val)
  * @brief  smoothstep: 输入 0~1, 输出 0~1, 两端斜率为 0
  *         公式: 3x? - 2x?
  */
-float HeatModel::SmoothStep(float x)
+float HeatModel::smoothStep(float x)
 {
-    x = Clamp(x, 0.0f, 1.0f);
+    x = clamp(x, 0.0f, 1.0f);
     return x * x * (3.0f - 2.0f * x);
 }
 
-bool HeatModel::DataValid(float heat_limit, float cooling_value)
+bool HeatModel::dataValid(float heat_limit, float cooling_value)
 {
-    return (heat_limit >= HEAT_VALID_LIMIT_MIN) && (cooling_value >= HEAT_VALID_COOLING_MIN);
+    return (heat_limit >= kHeatValidLimitMin) && (cooling_value >= kHeatValidCoolingMin);
 }
 
-void HeatModel::Init()
+void HeatModel::init()
 {
     heat_predicted     = 0.0f;
     heat_ref_snapshot  = 0.0f;
@@ -75,7 +77,7 @@ void HeatModel::Init()
  * 2. 通过 allowance 变化检测新弹丸发出, 累加到本地预测
  * 3. 融合 cooling_buff 得到有效冷却速率
  */
-void HeatModel::SyncFromReferee()
+void HeatModel::syncFromReferee()
 {
     float referee_heat_limit = (float)Referee_data.Heat_Limit;
     float barrel_heat        = (float)Referee_data.Barrel_Heat;
@@ -83,12 +85,12 @@ void HeatModel::SyncFromReferee()
     float cooling_buff       = (float)Referee_data.cooling_buff;
     uint16_t allowance       = Referee_data.projectile_allowance_17mm;
 
-    /* 有效冷却 = 基础冷却 + 冷却增益buff (能量机关/姿态等) */
+    /* 有效冷却 = 基础冷却 + 冷却增盋buff (能量机关/姿态等) */
     effective_cooling = base_cooling + cooling_buff;
     heat_limit = referee_heat_limit;
 
     /* 检查裁判数据有效性 */
-    if (!DataValid(referee_heat_limit, base_cooling))
+    if (!dataValid(referee_heat_limit, base_cooling))
     {
         enabled = false;
         return;
@@ -114,7 +116,7 @@ void HeatModel::SyncFromReferee()
     if (allowance < allowance_snapshot)
     {
         uint16_t bullets_fired = allowance_snapshot - allowance;
-        heat_predicted += (float)bullets_fired * HEAT_PER_BULLET_17MM;
+        heat_predicted += (float)bullets_fired * kHeatPerBullet17mm;
         allowance_snapshot = allowance;
     }
 
@@ -136,7 +138,7 @@ void HeatModel::SyncFromReferee()
  * ratio  = margin / (C_eff * T_window)
  * factor = K_MIN + (1 - K_MIN) * smoothstep(ratio)
  */
-float HeatModel::CalcSpeedFactor() const
+float HeatModel::calcSpeedFactor() const
 {
     if (!enabled)
     {
@@ -144,8 +146,8 @@ float HeatModel::CalcSpeedFactor() const
         return 1.0f;
     }
 
-    float margin          = heat_limit - HEAT_RESERVE - heat_predicted;
-    float window_capacity = effective_cooling * HEAT_WINDOW_SEC;
+    float margin          = heat_limit - kHeatReserve - heat_predicted;
+    float window_capacity = effective_cooling * kHeatWindowSec;
 
     /* 防止除零 */
     if (window_capacity < 0.1f)
@@ -153,17 +155,17 @@ float HeatModel::CalcSpeedFactor() const
         window_capacity = 0.1f;
     }
 
-    float ratio = Clamp(margin / window_capacity, 0.0f, 1.0f);
-    return HEAT_K_MIN + (1.0f - HEAT_K_MIN) * SmoothStep(ratio);
+    float ratio = clamp(margin / window_capacity, 0.0f, 1.0f);
+    return kHeatKMin + (1.0f - kHeatKMin) * smoothStep(ratio);
 }
 
-void HeatModel::Update()
+void HeatModel::update()
 {
-    SyncFromReferee();
-    speed_factor = CalcSpeedFactor();
+    syncFromReferee();
+    speed_factor = calcSpeedFactor();
 }
 
-float HeatModel::GetControlledSpeed(float base_speed) const
+float HeatModel::getControlledSpeed(float base_speed) const
 {
     if (fabsf(base_speed) < 1.0f)
     {
@@ -172,18 +174,20 @@ float HeatModel::GetControlledSpeed(float base_speed) const
     return base_speed * speed_factor;
 }
 
+} 
+
 /* ============================================================
  *  extern "C" 公开接口 (委托给类实例)
  * ============================================================ */
 
 extern "C" void HeatControl_Init(void)
 {
-    g_heat_model.Init();
+    g_heat_model.init();
 }
 
 extern "C" void HeatControl_Update(void)
 {
-    g_heat_model.Update();
+    g_heat_model.update();
 }
 
 extern "C" float HeatControl_GetFactor(void)
@@ -193,7 +197,7 @@ extern "C" float HeatControl_GetFactor(void)
 
 extern "C" float HeatControl_GetSpeed(float base_speed)
 {
-    return g_heat_model.GetControlledSpeed(base_speed);
+    return g_heat_model.getControlledSpeed(base_speed);
 }
 
 extern "C" uint8_t HeatControl_IsEnabled(void)

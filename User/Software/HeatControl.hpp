@@ -1,7 +1,7 @@
 /**
  * @file    HeatControl.hpp
  * @brief   拨弹盘热量控制模块 — 公开接口
- * @author  Nas (2026-05)
+ * @author  Nas 
  *
  * @details 使用 C++ class 封装热量预测模型,
  *          同时保留 extern "C" 接口供 RTOS 调用.
@@ -59,6 +59,8 @@ uint8_t HeatControl_IsEnabled(void);
 /* =================== C++ Only =================== */
 #ifdef __cplusplus
 
+namespace robot::heat_control {
+
 /* ==================================================================
  * HeatModel — 热量预测与限速控制器
  * ================================================================== */
@@ -74,29 +76,31 @@ public:
     bool     enabled             = false; // 热量控制是否启用
 
     /* 初始化 (清零所有状态) */
-    void Init();
+    void init();
 
     /* 每控制周期更新: 同步裁判数据 + 冷却衰减 + 计算速度系数 */
-    void Update();
+    void update();
 
     /* 获取限速后的拨弹速度 */
-    float GetControlledSpeed(float base_speed) const;
+    float getControlledSpeed(float base_speed) const;
 
 private:
     /* 同步裁判系统热量数据到本地模型 */
-    void SyncFromReferee();
+    void syncFromReferee();
 
     /* 计算速度系数 */
-    float CalcSpeedFactor() const;
+    float calcSpeedFactor() const;
 
     /* 工具函数 */
-    static float Clamp(float value, float min_val, float max_val);
-    static float SmoothStep(float x);
-    static bool  DataValid(float heat_limit, float cooling_value);
+    static float clamp(float value, float min_val, float max_val);
+    static float smoothStep(float x);
+    static bool  dataValid(float heat_limit, float cooling_value);
 };
 
+} // namespace robot::heat_control
+
 /* 全局实例 */
-extern HeatModel g_heat_model;
+extern robot::heat_control::HeatModel g_heat_model;
 
 #endif /* __cplusplus */
 #endif /* __HEAT_CONTROL_H__ */
