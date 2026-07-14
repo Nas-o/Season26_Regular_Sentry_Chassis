@@ -98,7 +98,6 @@ public:
 private:
     /* 超电额外功率调节 */
     float cap_extra_power_        = 0.0f;
-    float cap_voltage_last_       = 0.0f;
 
     /* Buffer Energy 慢闭环 */
     float buffer_energy_derating_ = 0.0f;

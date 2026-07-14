@@ -150,7 +150,7 @@ void Chassis::initMotor()
         deta[i] = deta[i] * PI / 180.0f;
     }
 
-    /* 随机运动参数 */
+    /* 随机参数 */
     random_state_.interval = 250;
     srand(HAL_GetTick());
 }
@@ -198,10 +198,11 @@ void Chassis::rudderCalculation(float x, float y, float w)
     {
         for (int i = 0; i < WHEEL_NUM; i++)
         {
-            float vy_comp = y - kSteerCosSign[i] * w * 0.707107f;
-            float vx_comp = x + kSteerSinSign[i] * w * 0.707107f;
+            /* v在 x,y 轴上的分量 */
+            float wheel_vx  = x + kSteerSinSign[i] * w * sinf(deta[i]);
+            float wheel_vy  = y - kSteerCosSign[i] * w * cosf(deta[i]);
             wheel[i].steer.set_angle =
-                atan2f(vy_comp, vx_comp) * 180.0f / PI;
+                atan2f(wheel_vy, wheel_vx ) * 180.0f / PI;
         }
     }
 
@@ -224,28 +225,28 @@ void Chassis::nearbyTransposition()
 {
     for (int i = 0; i < WHEEL_NUM; i++)
     {
-        SteerUnit &st = wheel[i].steer;
-        DriveUnit &dr = wheel[i].drive;
+        SteerUnit &steer = wheel[i].steer;
+        DriveUnit &drive = wheel[i].drive;
 
         /* 计算目标ECD与当前ECD的归一化偏差 (±4096范围) */
-        st.target_angle = modNorm(st.set - st.now, 8192.0f);
+        steer.target_angle = modNorm(steer.set - steer.now, 8192.0f);
 
         /* cos值用于连续调制驱动方向, 在±90°边界平滑过渡 */
-        float cos_val = cosf(st.target_angle * (2.0f * PI / 8192.0f));
+        float drive_scale = cosf(steer.target_angle * (2.0f * PI / 8192.0f));
 
         /* 偏差在±90°以内: 直接转到目标 */
-        if (-2048.0f <= st.target_angle && st.target_angle <= 2048.0f)
+        if (-2048.0f <= steer.target_angle && steer.target_angle <= 2048.0f)
         {
-            st.set = st.target_angle + st.now;
+            steer.set = steer.target_angle + steer.now;
         }
-        /* 偏差超过90°: 转到反向位置, 由cos_val反转驱动方向 */
+        /* 偏差超过90°: 转到反向位置, 由drive_scale反转驱动方向 */
         else
         {
-            st.set = modNorm(st.target_angle + 4096.0f, 8192.0f) + st.now;
+            steer.set = modNorm(steer.target_angle + 4096.0f, 8192.0f) + steer.now;
         }
 
         /* 驱动方向 = 配置符号 × 余弦调制 */
-        dr.direction = kDriveSign[i] * cos_val;
+        drive.direction = kDriveSign[i] * drive_scale;
     }
 }
 
@@ -307,10 +308,12 @@ void Chassis::calculator(float vx, float vy, float vw)
     float w = vw * WHEEL_TRACK;
     for (int i = 0; i < WHEEL_NUM; i++)
     {
-        float vx_c = vx + kSteerSinSign[i] * w * sinf(deta[i]);
-        float vy_c = vy + kSteerCosSign[i] * w * cosf(deta[i]);
-        float v_mag = sqrtf(vx_c * vx_c + vy_c * vy_c);
-        wheel[i].drive.target_velocity = v_mag * wheel[i].drive.direction;
+        /* 平移速度 + 旋转速度叠加后的 x,y 分量 */
+        float vx_combined = vx + kSteerSinSign[i] * w * sinf(deta[i]);
+        float vy_combined = vy + kSteerCosSign[i] * w * cosf(deta[i]);
+        /* 这个轮子需要的速度大小 */
+        float wheel_speed  = sqrtf(vx_combined * vx_combined + vy_combined * vy_combined);
+        wheel[i].drive.target_velocity = wheel_speed  * wheel[i].drive.direction;
     }
 
     /* 第4步: 舵向速度环 -> 电流 */
@@ -346,26 +349,26 @@ void Chassis::calculator(float vx, float vy, float vw)
  */
 void Chassis::powerTotal(float total_max)
 {
-    int16_t w_c[WHEEL_NUM], s_c[WHEEL_NUM];
-    float   w_s[WHEEL_NUM], s_s[WHEEL_NUM];
+    int16_t drive_current[WHEEL_NUM], steer_current[WHEEL_NUM];
+    float   drive_speed_rad[WHEEL_NUM], steer_speed_rad[WHEEL_NUM];
 
     /* 拷贝当前电流和速度 */
     for (int i = 0; i < WHEEL_NUM; i++)
     {
-        w_c[i] = wheel[i].drive.current;
-        s_c[i] = wheel[i].steer.current;
-        w_s[i] = DJIMotor_GetData(kDriveId[i]).round_speed * RPM_TO_RAD_S;
-        s_s[i] = DJIMotor_GetData(kSteerId[i]).speed_rpm * RPM_TO_RAD_S;
+        drive_current[i] = wheel[i].drive.current;
+        steer_current[i] = wheel[i].steer.current;
+        drive_speed_rad[i] = DJIMotor_GetData(kDriveId[i]).round_speed * RPM_TO_RAD_S;
+        steer_speed_rad[i] = DJIMotor_GetData(kSteerId[i]).speed_rpm * RPM_TO_RAD_S;
     }
 
-    /* 调用 PowerControl 模块统一限幅 */
-    PowerControl_Apply(w_c, w_s, s_c, s_s, total_max);
+    /* 调用功率控制模块统一限幅 */
+    PowerControl_Apply(drive_current, drive_speed_rad, steer_current, steer_speed_rad, total_max);
 
     /* 回写限幅后的电流 */
     for (int i = 0; i < WHEEL_NUM; i++)
     {
-        wheel[i].drive.current = w_c[i];
-        wheel[i].steer.current = s_c[i];
+        wheel[i].drive.current = drive_current[i];
+        wheel[i].steer.current = steer_current[i];
     }
 }
 
@@ -440,10 +443,10 @@ void Chassis::tasks()
          */
         final_r = followUpdate();
         float theta = relative_angle * (PI / 180.0f);
-        float cos_t = cosf(theta);
-        float sin_t = sinf(theta);
-        final_vx = vx * cos_t - vy * sin_t;
-        final_vy = vx * sin_t + vy * cos_t;
+        float cos_theta = cosf(theta);
+        float sin_theta = sinf(theta);
+        final_vx = vx * cos_theta - vy * sin_theta;
+        final_vy = vx * sin_theta + vy * cos_theta;
     }
 
     /* ---- 控制流水线 ---- */

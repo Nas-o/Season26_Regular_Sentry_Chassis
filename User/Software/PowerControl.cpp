@@ -44,27 +44,19 @@ constexpr float kPowerLimitMin        = 20.0f;
 
 /* ============ 慢环功率预算参数 ============ */
 constexpr float    kPowerSafetyMargin    = 0.93f;
-constexpr float    kCapMinVol            = 13.0f;
-constexpr float    kCapAllowVol          = 16.0f;
-constexpr float    kCapFullVol           = 24.0f;
+constexpr float    kCapEnableVol         = 16.0f;
+constexpr float    kCapProtectVol        = 13.0f;
 constexpr float    kCapExtraRatio        = 0.5f;
-constexpr float    kCapReleaseRate       = 0.5f;
-constexpr float    kCapTightenRate       = 3.0f;
-constexpr float    kCapVoltDropThresh    = 0.05f;
 constexpr float    kBufferTarget         = 45.0f;
 constexpr float    kBufferDeadband       = 5.0f;
-constexpr float    kBufferDanger         = 15.0f;
 constexpr float    kBufferDeratingMax    = 50.0f;
-constexpr float    kBufferTightenRate    = 2.0f;
-constexpr float    kBufferReleaseRate    = 0.3f;
+constexpr float    kTightenRate          = 2.0f;
+constexpr float    kReleaseRate          = 0.3f;
 constexpr float    kPowerLpfAlpha        = 0.02f;
-constexpr float    kPowerOverThreshold   = 0.0f;
 constexpr float    kPowerDeratingMax     = 25.0f;
-constexpr float    kPowerTightenRate     = 1.5f;
-constexpr float    kPowerReleaseRate     = 0.2f;
 constexpr uint32_t kBudgetUpdatePeriodMs = 20;
-
-} // anonymous namespace
+constexpr float buffer_danger = kBufferTarget - 6.0f * kBufferDeadband;
+} 
 
 /* ============ 全局实例 ============ */
 robot::power_control::PowerLimiter g_lim_wheel;
@@ -227,7 +219,6 @@ namespace robot::power_control
     void PowerBudget::reset()
     {
         cap_extra_power_        = 0.0f;
-        cap_voltage_last_       = 0.0f;
         buffer_energy_derating_ = 0.0f;
         power_derating_         = 0.0f;
         power_filtered_         = 0.0f;
@@ -280,33 +271,26 @@ namespace robot::power_control
         /* ---- 超电额外功率调节 ---- */
         {
             float voltage       = cap.remain_vol;
-            float voltage_drop  = cap_voltage_last_ - voltage;
             float buffer_energy = (float)Referee_data.Buffer_Energy;
 
-            /* 电压过低: 立即关闭额外功率 */
-            if (voltage < kCapMinVol)
+            if (voltage < kCapProtectVol)
             {
+                /* 超电电压过低，立即关闭额外功率 */
                 cap_extra_power_ = 0.0f;
             }
-            /* 电压骤降: 收紧 */
-            else if (voltage_drop > kCapVoltDropThresh)
+            else if (voltage > kCapEnableVol && buffer_energy > kBufferTarget)
             {
-                cap_extra_power_ -= kCapTightenRate;
+                /* 电压和缓冲都充足，缓慢释放额外功率 */
+                cap_extra_power_ += kReleaseRate ;
             }
-            /* 电压充足且缓冲够: 缓慢释放额外功率 */
-            else if (voltage > kCapAllowVol && buffer_energy > kBufferTarget)
+            else
             {
-                cap_extra_power_ += kCapReleaseRate;
-            }
-            /* 缓冲不足: 慢收紧 */
-            else if (buffer_energy < kBufferTarget - kBufferDeadband)
-            {
-                cap_extra_power_ -= kCapTightenRate * 0.5f;
+                /* 条件不够好时，慢慢收回额外功率，避免一直占着预算 */
+                cap_extra_power_ -= kReleaseRate ;
             }
 
             float cap_max = power_referee * kCapExtraRatio;
             cap_extra_power_ = fp32_constrain(cap_extra_power_, 0.0f, cap_max);
-            cap_voltage_last_ = voltage;
         }
 
         /* ---- Buffer Energy 慢闭环 ---- */
@@ -314,19 +298,19 @@ namespace robot::power_control
             float buffer_energy = (float)Referee_data.Buffer_Energy;
 
             /* 缓冲能量危险: 立即拉满降额 */
-            if (buffer_energy < kBufferDanger)
+            if (buffer_energy < buffer_danger )
             {
                 buffer_energy_derating_ = kBufferDeratingMax;
             }
             /* 缓冲偏低: 逐步收紧 */
             else if (buffer_energy < kBufferTarget - kBufferDeadband)
             {
-                buffer_energy_derating_ += kBufferTightenRate;
+                buffer_energy_derating_ += kTightenRate;
             }
             /* 缓冲恢复: 逐步释放 */
             else if (buffer_energy > kBufferTarget + kBufferDeadband)
             {
-                buffer_energy_derating_ -= kBufferReleaseRate;
+                buffer_energy_derating_ -= kReleaseRate;
             }
             buffer_energy_derating_ = fp32_constrain(buffer_energy_derating_, 0.0f, kBufferDeratingMax);
         }
@@ -340,14 +324,15 @@ namespace robot::power_control
             }
 
             float over = power_filtered_ - power_sustained;
-            if (over > kPowerOverThreshold)
+            if (over > 0.0f)
             {
-                power_derating_ += kPowerTightenRate;
+                power_derating_ += kTightenRate;
             }
-            else if (power_filtered_ < power_referee * 0.85f)
+            else if (power_filtered_ < power_sustained - 5.0f)
             {
-                power_derating_ -= kPowerReleaseRate;
+                power_derating_ -= kReleaseRate;
             }
+
             power_derating_ = fp32_constrain(power_derating_, 0.0f, kPowerDeratingMax);
         }
 

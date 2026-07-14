@@ -32,7 +32,8 @@ uint8_t Chassis_GetAligning(void);
 #include "CAN_receive_send.hpp"
 #include "PowerControl.hpp"
 
-namespace robot::chassis {
+namespace robot::chassis 
+{
 
 /* ÂÖÎ»Ë÷Òý */
 enum WheelPos : uint8_t { FL = 0, FR, BL, BR, WHEEL_NUM = 4 };

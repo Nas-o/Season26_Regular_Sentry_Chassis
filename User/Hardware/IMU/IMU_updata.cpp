@@ -179,6 +179,7 @@ float degree2rad(float a)
 	return a / 180.0f * PI;
 }
 
+
 void MagUpdate() // 更新地磁计
 {
 	// ist8310_read_mag(IMU_data.mag);
